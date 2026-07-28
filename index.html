@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Stock Manager</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📦</text></svg>">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true">📦</span>
+    <div>
+      <h1 id="shopName">Stock Manager</h1>
+      <p class="brand-sub">Stock, orders &amp; sales in one place</p>
+    </div>
+  </div>
+  <div class="topbar-actions">
+    <button class="btn btn-primary" data-open="sale">Record a sale</button>
+    <button class="btn" data-open="restock">Add stock</button>
+    <button class="btn btn-icon" id="themeToggle" title="Switch light / dark" aria-label="Switch light or dark theme">◐</button>
+  </div>
+</header>
+
+<nav class="tabs" role="tablist">
+  <button class="tab is-active" role="tab" data-view="dashboard">Overview</button>
+  <button class="tab" role="tab" data-view="products">Products</button>
+  <button class="tab" role="tab" data-view="reorder">To&nbsp;buy <span class="tab-badge" id="reorderBadge" hidden>0</span></button>
+  <button class="tab" role="tab" data-view="sales">Sales</button>
+  <button class="tab" role="tab" data-view="data">Settings</button>
+</nav>
+
+<main id="main">
+
+  <!-- ───────────────────────── Overview ───────────────────────── -->
+  <section class="view is-active" id="view-dashboard">
+    <div class="stat-row" id="statRow"></div>
+
+    <div class="grid-2">
+      <section class="card">
+        <div class="card-head">
+          <h2>How much is being bought</h2>
+          <div class="seg" id="salesRange" role="group" aria-label="Time range">
+            <button class="seg-btn is-active" data-days="14">14 days</button>
+            <button class="seg-btn" data-days="30">30 days</button>
+            <button class="seg-btn" data-days="90">90 days</button>
+          </div>
+        </div>
+        <div class="chart-wrap viz-root" id="salesChart"></div>
+        <p class="card-note" id="salesChartNote"></p>
+      </section>
+
+      <section class="card">
+        <div class="card-head"><h2>Best sellers</h2><span class="card-head-note">last 30 days</span></div>
+        <div class="chart-wrap viz-root" id="topChart"></div>
+      </section>
+    </div>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Needs attention</h2>
+        <button class="btn btn-sm" data-view-link="reorder">See the full buying list</button>
+      </div>
+      <div id="attentionList"></div>
+    </section>
+  </section>
+
+  <!-- ───────────────────────── Products ───────────────────────── -->
+  <section class="view" id="view-products">
+    <div class="toolbar">
+      <input type="search" id="productSearch" class="input" placeholder="Search by name, code or category…" aria-label="Search products">
+      <select id="categoryFilter" class="input input-select" aria-label="Filter by category"></select>
+      <select id="statusFilter" class="input input-select" aria-label="Filter by stock status">
+        <option value="">All stock levels</option>
+        <option value="out">Out of stock</option>
+        <option value="low">Running low</option>
+        <option value="ok">Well stocked</option>
+      </select>
+      <button class="btn btn-primary" data-open="product">+ New product</button>
+    </div>
+    <div class="card card-flush">
+      <div class="table-scroll">
+        <table class="table" id="productTable">
+          <thead>
+            <tr>
+              <th class="sortable" data-sort="name">Product</th>
+              <th class="sortable num" data-sort="stock">In stock</th>
+              <th class="num">Alert at</th>
+              <th class="sortable num" data-sort="sold30">Sold (30d)</th>
+              <th class="num">Lasts about</th>
+              <th>Status</th>
+              <th class="num">Price</th>
+              <th class="col-actions"></th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="empty" id="productsEmpty" hidden>No products yet. Use <strong>+ New product</strong> to add the first one, or load the demo data from Settings.</p>
+    </div>
+  </section>
+
+  <!-- ───────────────────────── To buy ───────────────────────── -->
+  <section class="view" id="view-reorder">
+    <div class="toolbar">
+      <div class="toolbar-text">
+        <h2 class="view-title">Shopping list for the supplier</h2>
+        <p class="muted">Everything at or below its alert level, with how much to order so it lasts about
+          <strong id="coverDaysLabel">30</strong> days.</p>
+      </div>
+      <button class="btn" id="printOrder">Print / save as PDF</button>
+    </div>
+    <div class="card card-flush">
+      <div class="table-scroll">
+        <table class="table" id="reorderTable">
+          <thead>
+            <tr>
+              <th>Product</th>
+              <th>Supplier</th>
+              <th class="num">In stock</th>
+              <th class="num">Sells per week</th>
+              <th class="num">Order this much</th>
+              <th class="num">Estimated cost</th>
+              <th class="col-actions"></th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+          <tfoot>
+            <tr><td colspan="5" class="num strong">Total</td><td class="num strong" id="reorderTotal"></td><td></td></tr>
+          </tfoot>
+        </table>
+      </div>
+      <p class="empty" id="reorderEmpty" hidden>Nothing to buy right now — every product is above its alert level. 🎉</p>
+    </div>
+  </section>
+
+  <!-- ───────────────────────── Sales ───────────────────────── -->
+  <section class="view" id="view-sales">
+    <div class="stat-row" id="salesStatRow"></div>
+    <div class="toolbar">
+      <input type="search" id="salesSearch" class="input" placeholder="Search sales by product or customer…" aria-label="Search sales">
+      <button class="btn btn-primary" data-open="sale">+ Record a sale</button>
+    </div>
+    <div class="card card-flush">
+      <div class="table-scroll">
+        <table class="table" id="salesTable">
+          <thead>
+            <tr>
+              <th>Date</th><th>Product</th><th class="num">Quantity</th>
+              <th>Customer</th><th class="num">Total</th><th class="col-actions"></th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="empty" id="salesEmpty" hidden>No sales recorded yet.</p>
+      <div class="table-more"><button class="btn btn-sm" id="salesMore" hidden>Show more</button></div>
+    </div>
+  </section>
+
+  <!-- ───────────────────────── Settings ───────────────────────── -->
+  <section class="view" id="view-data">
+    <div class="grid-2">
+      <section class="card">
+        <div class="card-head"><h2>Shop settings</h2></div>
+        <div class="form-grid">
+          <label class="field"><span>Shop name</span>
+            <input class="input" id="setShopName" placeholder="My shop"></label>
+          <label class="field"><span>Currency symbol</span>
+            <input class="input" id="setCurrency" maxlength="3" placeholder="$"></label>
+          <label class="field"><span>Order enough to last (days)</span>
+            <input class="input" id="setCoverDays" type="number" min="1" max="365" step="1">
+            <small class="hint">Used to work out how much to buy on the “To buy” page.</small></label>
+        </div>
+        <div class="card-foot"><button class="btn btn-primary" id="saveSettings">Save settings</button></div>
+      </section>
+
+      <section class="card">
+        <div class="card-head"><h2>Backup &amp; data</h2></div>
+        <p class="muted">Everything is saved in this browser only. Download a backup now and then, and keep it somewhere safe.</p>
+        <div class="btn-row">
+          <button class="btn btn-primary" id="exportJson">Download backup</button>
+          <button class="btn" id="importJson">Restore from backup</button>
+          <input type="file" id="importFile" accept="application/json,.json" hidden>
+        </div>
+        <div class="btn-row">
+          <button class="btn" id="exportProductsCsv">Products as spreadsheet (CSV)</button>
+          <button class="btn" id="exportSalesCsv">Sales as spreadsheet (CSV)</button>
+        </div>
+        <hr class="rule">
+        <div class="btn-row">
+          <button class="btn" id="loadDemo">Load demo data</button>
+          <button class="btn btn-danger" id="clearAll">Erase everything</button>
+        </div>
+        <p class="card-note" id="storageNote"></p>
+      </section>
+    </div>
+  </section>
+</main>
+
+<!-- ───────────────────────── Dialogs ───────────────────────── -->
+<dialog class="modal" id="productModal">
+  <form method="dialog" id="productForm">
+    <h2 class="modal-title" id="productModalTitle">New product</h2>
+    <input type="hidden" id="p_id">
+    <div class="form-grid">
+      <label class="field span-2"><span>Product name *</span>
+        <input class="input" id="p_name" required maxlength="80" placeholder="e.g. Olive oil 1L"></label>
+      <label class="field"><span>Code / barcode</span>
+        <input class="input" id="p_sku" maxlength="40" placeholder="optional"></label>
+      <label class="field"><span>Category</span>
+        <input class="input" id="p_category" list="categoryList" maxlength="40" placeholder="e.g. Groceries">
+        <datalist id="categoryList"></datalist></label>
+      <label class="field"><span>Supplier</span>
+        <input class="input" id="p_supplier" maxlength="60" placeholder="Who you buy it from"></label>
+      <label class="field"><span>Sold in</span>
+        <input class="input" id="p_unit" maxlength="16" placeholder="pieces, boxes, kg…"></label>
+      <label class="field"><span>How many in stock now *</span>
+        <input class="input" id="p_stock" type="number" min="0" step="1" required value="0"></label>
+      <label class="field"><span>Warn me when stock drops to</span>
+        <input class="input" id="p_reorderPoint" type="number" min="0" step="1" value="5">
+        <small class="hint">Your low-stock alert level.</small></label>
+      <label class="field"><span>Usual order size</span>
+        <input class="input" id="p_reorderQty" type="number" min="0" step="1" value="10">
+        <small class="hint">Smallest sensible amount to buy at once.</small></label>
+      <label class="field"><span>Cost per unit</span>
+        <input class="input" id="p_cost" type="number" min="0" step="0.01" value="0"></label>
+      <label class="field"><span>Selling price per unit</span>
+        <input class="input" id="p_price" type="number" min="0" step="0.01" value="0"></label>
+    </div>
+    <p class="form-error" id="productError" hidden></p>
+    <div class="modal-foot">
+      <button class="btn btn-danger btn-ghost" type="button" id="deleteProduct" hidden>Delete</button>
+      <span class="spacer"></span>
+      <button class="btn" type="button" data-close>Cancel</button>
+      <button class="btn btn-primary" type="submit">Save product</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="modal" id="saleModal">
+  <form method="dialog" id="saleForm">
+    <h2 class="modal-title">Record a sale</h2>
+    <div class="form-grid">
+      <label class="field span-2"><span>Product *</span>
+        <select class="input input-select" id="s_product" required></select></label>
+      <label class="field"><span>How many *</span>
+        <input class="input" id="s_qty" type="number" min="1" step="1" value="1" required></label>
+      <label class="field"><span>Date</span>
+        <input class="input" id="s_date" type="date" required></label>
+      <label class="field"><span>Customer</span>
+        <input class="input" id="s_buyer" maxlength="60" placeholder="optional"></label>
+      <label class="field"><span>Price per unit</span>
+        <input class="input" id="s_price" type="number" min="0" step="0.01"></label>
+    </div>
+    <p class="form-note" id="saleNote"></p>
+    <p class="form-error" id="saleError" hidden></p>
+    <div class="modal-foot">
+      <span class="spacer"></span>
+      <button class="btn" type="button" data-close>Cancel</button>
+      <button class="btn btn-primary" type="submit">Save sale</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="modal" id="restockModal">
+  <form method="dialog" id="restockForm">
+    <h2 class="modal-title">Add stock</h2>
+    <div class="form-grid">
+      <label class="field span-2"><span>Product *</span>
+        <select class="input input-select" id="r_product" required></select></label>
+      <label class="field"><span>How many arrived *</span>
+        <input class="input" id="r_qty" type="number" min="1" step="1" value="1" required></label>
+      <label class="field"><span>Date</span>
+        <input class="input" id="r_date" type="date" required></label>
+      <label class="field"><span>Cost per unit</span>
+        <input class="input" id="r_cost" type="number" min="0" step="0.01"></label>
+    </div>
+    <p class="form-note" id="restockNote"></p>
+    <div class="modal-foot">
+      <span class="spacer"></span>
+      <button class="btn" type="button" data-close>Cancel</button>
+      <button class="btn btn-primary" type="submit">Add to stock</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="modal modal-sm" id="confirmModal">
+  <form method="dialog">
+    <h2 class="modal-title" id="confirmTitle">Are you sure?</h2>
+    <p id="confirmBody" class="muted"></p>
+    <div class="modal-foot">
+      <span class="spacer"></span>
+      <button class="btn" type="button" data-close>Cancel</button>
+      <button class="btn btn-danger" type="submit" id="confirmOk">Yes, do it</button>
+    </div>
+  </form>
+</dialog>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+<!-- Printable purchase order (hidden on screen) -->
+<div id="printArea" aria-hidden="true"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
