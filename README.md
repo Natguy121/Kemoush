@@ -61,7 +61,15 @@ untick it to only add the genuinely new ones.
 - **A delivery arrives** → *Add stock*. Stock goes up automatically.
 - **Time to order** → open **To buy**, then *Print / save as PDF* to send or hand to the
   supplier.
-- Made a mistake? Every sale has an **Undo** button that puts the stock back.
+- Made a mistake? Every sale has its own **Undo** button that puts that stock back.
+
+### Undo anything else
+
+There's also an **↺ Undo** button at the top of the page. It appears the moment there's
+something to undo, and reverses whatever was just done — an edit, a deleted product, an
+import, even *Erase everything*. Click it again to keep walking back through the last
+few changes. It remembers even if the page is closed and reopened, so a mistake found
+later can still be fixed.
 
 ## How "order this much" is worked out
 

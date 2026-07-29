@@ -8,6 +8,8 @@
 
 const STORAGE_KEY = 'stockManager.v1';
 const THEME_KEY = 'stockManager.theme';
+const UNDO_KEY = 'stockManager.undo.v1';
+const UNDO_LIMIT = 10;
 
 /* ── Small helpers ─────────────────────────────────────────────────────── */
 
@@ -112,13 +114,59 @@ const normRestock = (r) => (r && r.productId ? {
   date: r.date || dateKey(),
 } : null);
 
+/* ── Undo ──────────────────────────────────────────────────────────────── *
+ * Every save() keeps a copy of whatever was there just before it, so one
+ * button reverses the last change — a wrong edit, an accidental delete, a
+ * bad import, even "Erase everything". Kept in localStorage (not just
+ * memory) so it survives closing the browser, capped to the last few
+ * changes to keep it small.                                                */
+
+let undoStack = [];
+try { undoStack = JSON.parse(localStorage.getItem(UNDO_KEY) || '[]'); } catch { undoStack = []; }
+if (!Array.isArray(undoStack)) undoStack = [];
+
+function persistUndoStack() {
+  try { localStorage.setItem(UNDO_KEY, JSON.stringify(undoStack)); } catch { /* best effort */ }
+}
+
+function updateUndoButton() {
+  const btn = $('#undoBtn');
+  if (btn) btn.hidden = undoStack.length === 0;
+}
+
 function save() {
   try {
+    const prev = localStorage.getItem(STORAGE_KEY);
+    if (prev !== null) {
+      undoStack.push(prev);
+      if (undoStack.length > UNDO_LIMIT) undoStack.shift();
+      persistUndoStack();
+    }
     localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
+    updateUndoButton();
   } catch (err) {
     console.error(err);
     toast('Could not save — the browser storage may be full.');
   }
+}
+
+function undoLast() {
+  if (!undoStack.length) return;
+  const prevRaw = undoStack.pop();
+  persistUndoStack();
+  try {
+    db = normalise(JSON.parse(prevRaw));
+  } catch (err) {
+    console.error(err);
+    toast('Could not undo — that change could not be read back.');
+    return;
+  }
+  // Written directly (not via save()) so undoing doesn't push a new step
+  // onto its own stack — repeated clicks keep walking further back.
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(db)); } catch { /* best effort */ }
+  updateUndoButton();
+  renderAll();
+  toast('Last change undone.');
 }
 
 /* ── Derived numbers ───────────────────────────────────────────────────── */
@@ -1489,6 +1537,10 @@ function init() {
   load();
   applyTheme(localStorage.getItem(THEME_KEY));
   renderAll();
+  updateUndoButton();
+
+  /* Undo */
+  $('#undoBtn').addEventListener('click', undoLast);
 
   /* Navigation */
   $$('.tab').forEach((t) => t.addEventListener('click', () => showView(t.dataset.view)));
