@@ -86,9 +86,31 @@
         <option value="low">Running low</option>
         <option value="ok">Well stocked</option>
       </select>
+      <div class="seg" id="productMode" role="group" aria-label="How to show the products">
+        <button class="seg-btn is-active" data-mode="list">List</button>
+        <button class="seg-btn" data-mode="grid">Spreadsheet</button>
+      </div>
+      <button class="btn" id="importProducts">Import from Excel</button>
       <button class="btn btn-primary" data-open="product">+ New product</button>
     </div>
-    <div class="card card-flush">
+
+    <div class="card card-flush" id="productGridCard" hidden>
+      <div class="table-scroll">
+        <table class="table table-grid" id="productGrid">
+          <thead><tr id="productGridHead"></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="grid-foot">
+        <button class="btn btn-sm" id="gridAddRow">+ Add a row</button>
+        <p class="grid-hint">Click a cell to edit it. <strong>Enter</strong> or <strong>Tab</strong> saves and moves on,
+          <strong>Esc</strong> undoes, and the <strong>arrow keys</strong> move around — same as a spreadsheet.
+          Changes save straight away.</p>
+      </div>
+      <p class="empty" id="gridEmpty" hidden>No products match this search.</p>
+    </div>
+
+    <div class="card card-flush" id="productListCard">
       <div class="table-scroll">
         <table class="table" id="productTable">
           <thead>
@@ -291,6 +313,34 @@
       <span class="spacer"></span>
       <button class="btn" type="button" data-close>Cancel</button>
       <button class="btn btn-primary" type="submit">Add to stock</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="modal modal-lg" id="importModal">
+  <form method="dialog" id="importForm">
+    <h2 class="modal-title">Import products from a spreadsheet</h2>
+    <p class="muted">In Excel, select your rows <em>including the header row</em>, copy them, then click the box
+      below and paste. A saved <code>.csv</code> file works too.</p>
+
+    <div class="btn-row">
+      <button class="btn" type="button" id="importPickFile">Choose a CSV file…</button>
+      <input type="file" id="importCsvFile" accept=".csv,.tsv,.txt,text/csv" hidden>
+    </div>
+
+    <label class="field span-2"><span>Or paste here</span>
+      <textarea class="input" id="importPaste" rows="5"
+        placeholder="Code&#9;Product&#9;Category&#9;In stock&#9;Cost&#9;Price"></textarea></label>
+
+    <div id="importPreview"></div>
+    <p class="form-error" id="importError" hidden></p>
+
+    <div class="modal-foot">
+      <label class="check"><input type="checkbox" id="importUpdate" checked>
+        <span>Update products that already exist</span></label>
+      <span class="spacer"></span>
+      <button class="btn" type="button" data-close>Cancel</button>
+      <button class="btn btn-primary" type="submit" id="importGo" disabled>Import</button>
     </div>
   </form>
 </dialog>

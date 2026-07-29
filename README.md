@@ -27,6 +27,34 @@ your own products.
 | **Sales** | Every sale recorded, plus today's and this month's totals |
 | **Settings** | Shop name, currency, backups, demo data |
 
+## Working with it like a spreadsheet
+
+The **Products** page has two views, switched with the **List / Spreadsheet** toggle:
+
+- **List** — the everyday view, with how fast things sell and what needs attention.
+- **Spreadsheet** — every product as an editable grid. Click any cell and type. **Enter**
+  or **Tab** saves and moves on, **Esc** undoes, and the **arrow keys** move around, the
+  same as Excel. Typing straight over a cell replaces it. Changes save immediately.
+  **+ Add a row** puts a new product at the bottom, ready to type into.
+
+### Bringing in an existing product list
+
+**Products → Import from Excel** takes a whole list in one go:
+
+1. In Excel, select your rows **including the header row**, and copy.
+2. Click *Import from Excel*, click the box, and paste. (A saved `.csv` file works too.)
+
+It reads the header row to work out which column is which, so the order doesn't matter —
+`Code`, `Product`, `Category`, `Supplier`, `Unit`, `In stock`, `Alert at`, `Usual order`,
+`Cost` and `Price` are all recognised, along with common alternatives like *SKU*,
+*Quantity*, *Buy price* or *Selling price*. Prices written either way round —
+`1,234.56` or `1.234,56` — are both understood, and currency symbols are ignored.
+
+Before anything is saved it shows how many products are new, how many it already has, and
+a preview of the first few rows. Products already in the list are matched by **code**
+first, then by name; leave *Update products that already exist* ticked to refresh them, or
+untick it to only add the genuinely new ones.
+
 ## Day-to-day use
 
 - **Someone buys something** → *Record a sale*. Stock goes down automatically.

@@ -357,6 +357,7 @@ const ui = {
   salesRangeDays: 14,
   productSort: { key: 'name', dir: 1 },
   salesLimit: 25,
+  productMode: 'list',
 };
 
 function renderAll() {
@@ -698,10 +699,168 @@ function renderProducts() {
     ? 'No products yet. Use “+ New product” to add the first one, or load the demo data from Settings.'
     : 'No products match this search.';
 
+  renderProductGrid(rows);
+
   $$('#productTable .sortable').forEach((th) => {
     th.classList.toggle('sort-asc', th.dataset.sort === ui.productSort.key && ui.productSort.dir === 1);
     th.classList.toggle('sort-desc', th.dataset.sort === ui.productSort.key && ui.productSort.dir === -1);
   });
+}
+
+/* Spreadsheet mode -------------------------------------------------------- *
+ * The same products, laid out as an editable grid: click a cell, type, then
+ * Enter / Tab / arrow keys to move on — the way a spreadsheet behaves.       */
+
+const GRID_COLS = [
+  { key: 'sku', label: 'Code', type: 'text' },
+  { key: 'name', label: 'Product', type: 'text' },
+  { key: 'category', label: 'Category', type: 'text' },
+  { key: 'supplier', label: 'Supplier', type: 'text' },
+  { key: 'unit', label: 'Unit', type: 'text' },
+  { key: 'stock', label: 'In stock', type: 'int' },
+  { key: 'reorderPoint', label: 'Alert at', type: 'int' },
+  { key: 'reorderQty', label: 'Usual order', type: 'int' },
+  { key: 'cost', label: 'Cost', type: 'money' },
+  { key: 'price', label: 'Price', type: 'money' },
+];
+
+const gridIsNum = (col) => col.type !== 'text';
+const gridDisplay = (p, col) => (col.type === 'money' ? money(p[col.key]) : col.type === 'int' ? num(p[col.key]) : p[col.key] || '');
+
+function renderProductGrid(rows) {
+  $('#productGridHead').innerHTML = GRID_COLS
+    .map((c) => `<th class="${gridIsNum(c) ? 'num' : ''}">${esc(c.label)}</th>`).join('') + '<th class="col-actions"></th>';
+
+  $('#productGrid tbody').innerHTML = rows.map(({ p }) => `<tr data-id="${p.id}">${
+    GRID_COLS.map((c) => {
+      const val = gridDisplay(p, c);
+      return `<td class="grid-cell${gridIsNum(c) ? ' is-num' : ''}${val === '' ? ' is-empty' : ''}" data-id="${p.id}" data-key="${c.key}"
+        ><span class="grid-text" tabindex="0" role="button" aria-label="${esc(c.label)}: ${esc(String(val) || 'empty')}">${esc(val === '' ? '—' : val)}</span></td>`;
+    }).join('')
+  }<td><div class="cell-actions">
+      <button class="btn btn-sm btn-ghost" data-act="delete" data-id="${p.id}" title="Remove this product completely">Remove</button>
+    </div></td></tr>`).join('');
+
+  $('#gridEmpty').hidden = rows.length > 0;
+  $('#productGrid').hidden = rows.length === 0;
+}
+
+/** Repaint one cell in place — avoids rebuilding the grid and losing focus. */
+function refreshGridCell(td) {
+  const p = productById(td.dataset.id);
+  const col = GRID_COLS.find((c) => c.key === td.dataset.key);
+  if (!p || !col) return;
+  const val = gridDisplay(p, col);
+  td.classList.toggle('is-empty', val === '');
+  const span = document.createElement('span');
+  span.className = 'grid-text';
+  span.tabIndex = 0;
+  span.setAttribute('role', 'button');
+  span.setAttribute('aria-label', `${col.label}: ${String(val) || 'empty'}`);
+  span.textContent = val === '' ? '—' : val;
+  td.replaceChildren(span);
+  return span;
+}
+
+function gridCellAt(row, colIndex) {
+  const cells = $$('.grid-cell', row);
+  return cells[Math.max(0, Math.min(cells.length - 1, colIndex))];
+}
+
+function moveGridFocus(td, dRow, dCol) {
+  const row = td.closest('tr');
+  const cells = $$('.grid-cell', row);
+  const colIndex = cells.indexOf(td) + dCol;
+  let targetRow = row;
+
+  if (dRow !== 0) {
+    targetRow = dRow > 0 ? row.nextElementSibling : row.previousElementSibling;
+    if (!targetRow) return false;
+  }
+  if (colIndex < 0 || colIndex >= cells.length) {
+    // Walking off the end wraps to the next / previous row, like Tab in Excel.
+    if (dCol === 0) return false;
+    targetRow = dCol > 0 ? row.nextElementSibling : row.previousElementSibling;
+    if (!targetRow) return false;
+    const wrapped = gridCellAt(targetRow, dCol > 0 ? 0 : GRID_COLS.length - 1);
+    wrapped.querySelector('.grid-text')?.focus();
+    return true;
+  }
+  gridCellAt(targetRow, colIndex).querySelector('.grid-text')?.focus();
+  return true;
+}
+
+function beginGridEdit(td, seed) {
+  if (td.querySelector('input')) return;
+  const p = productById(td.dataset.id);
+  const col = GRID_COLS.find((c) => c.key === td.dataset.key);
+  if (!p || !col) return;
+
+  const input = document.createElement('input');
+  input.className = 'grid-input';
+  if (gridIsNum(col)) {
+    input.type = 'number';
+    input.min = '0';
+    input.step = col.type === 'money' ? '0.01' : '1';
+  } else {
+    input.type = 'text';
+    input.maxLength = 80;
+  }
+  input.value = seed !== undefined ? seed : (gridIsNum(col) ? p[col.key] : p[col.key] || '');
+  td.replaceChildren(input);
+  input.focus();
+  if (seed === undefined) input.select();
+
+  let settled = false;
+  const finish = (commit, move) => {
+    if (settled) return;
+    settled = true;
+    if (commit) {
+      const value = gridIsNum(col) ? clampNum(input.value) : input.value.trim().slice(0, 80);
+      if (col.key === 'name' && !value) {
+        toast('A product needs a name.');
+      } else if (p[col.key] !== value) {
+        p[col.key] = value;
+        save();
+        // Every other view reads these numbers, so refresh them — but not the
+        // grid itself, which would tear the cell out from under the cursor.
+        renderReorderBadge();
+        renderDashboard();
+        renderReorder();
+      }
+    }
+    const span = refreshGridCell(td);
+    if (move) moveGridFocus(td, move.row, move.col);
+    else span?.focus();
+  };
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); finish(true, { row: 1, col: 0 }); }
+    else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+    else if (e.key === 'Tab') { e.preventDefault(); finish(true, { row: 0, col: e.shiftKey ? -1 : 1 }); }
+  });
+  input.addEventListener('blur', () => finish(true));
+}
+
+function addGridRow() {
+  const p = normProduct({ name: 'New product', id: uid(), createdAt: dateKey() });
+  db.products.push(p);
+  save();
+  renderAll();
+  showProductMode('grid');
+  const cell = $(`#productGrid .grid-cell[data-id="${p.id}"][data-key="name"]`);
+  if (cell) { cell.scrollIntoView({ block: 'center' }); beginGridEdit(cell, ''); }
+  else toast('Row added — clear the search to see it.');
+}
+
+function showProductMode(mode) {
+  ui.productMode = mode;
+  $('#productGridCard').hidden = mode !== 'grid';
+  $('#productListCard').hidden = mode === 'grid';
+  $$('#productMode .seg-btn').forEach((b) => b.classList.toggle('is-active', b.dataset.mode === mode));
+  // Cell edits deliberately skip re-rendering the products view, so catch the
+  // other mode up when swapping between them.
+  renderProducts();
 }
 
 /* To buy ------------------------------------------------------------------ */
@@ -1025,6 +1184,192 @@ function exportSalesCsv() {
   toast('Sales exported.');
 }
 
+/* ── Spreadsheet import ────────────────────────────────────────────────── *
+ * Accepts whatever Excel puts on the clipboard (tab-separated) as well as
+ * comma- or semicolon-separated files, then matches the header row against
+ * the names people actually use for these columns.                          */
+
+const IMPORT_ALIASES = {
+  sku: ['code', 'sku', 'barcode', 'ref', 'reference', 'productcode', 'itemcode', 'articlecode', 'art', 'codebarre'],
+  name: ['product', 'productname', 'name', 'item', 'itemname', 'description', 'designation', 'article', 'nom', 'produit', 'libelle'],
+  category: ['category', 'categories', 'type', 'group', 'department', 'categorie', 'famille', 'rayon'],
+  supplier: ['supplier', 'vendor', 'brand', 'make', 'manufacturer', 'fournisseur', 'marque'],
+  unit: ['unit', 'units', 'uom', 'measure', 'packaging', 'unite'],
+  stock: ['instock', 'stock', 'qty', 'quantity', 'onhand', 'stockonhand', 'currentstock', 'stocknow', 'quantite', 'qte', 'stockactuel'],
+  reorderPoint: ['alertat', 'alert', 'reorderpoint', 'reorderlevel', 'min', 'minimum', 'minstock', 'seuil', 'stockmin', 'alerte'],
+  reorderQty: ['usualorder', 'orderqty', 'reorderqty', 'packsize', 'pack', 'casesize', 'orderquantity', 'colisage'],
+  cost: ['cost', 'costprice', 'buyprice', 'buyingprice', 'purchase', 'purchaseprice', 'wholesale', 'prixachat', 'achat'],
+  price: ['price', 'sellprice', 'sellingprice', 'saleprice', 'retail', 'retailprice', 'rrp', 'prixvente', 'vente', 'prix'],
+};
+
+const normHeader = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
+
+function pickDelimiter(text) {
+  const line = text.split('\n')[0] || '';
+  const count = (ch) => line.split(ch).length - 1;
+  const tabs = count('\t');
+  const semis = count(';');
+  const commas = count(',');
+  if (tabs >= semis && tabs >= commas && tabs > 0) return '\t';
+  if (semis >= commas && semis > 0) return ';';
+  return ',';
+}
+
+/** Split delimited text into rows, honouring "quoted, cells". */
+function parseDelimited(text) {
+  const clean = String(text).replace(/\r\n?/g, '\n').replace(/\n+$/, '');
+  if (!clean.trim()) return [];
+  const delim = pickDelimiter(clean);
+  const rows = [];
+  let row = [], cell = '', quoted = false;
+
+  for (let i = 0; i < clean.length; i++) {
+    const ch = clean[i];
+    if (quoted) {
+      if (ch !== '"') { cell += ch; continue; }
+      if (clean[i + 1] === '"') { cell += '"'; i++; continue; }
+      quoted = false;
+    } else if (ch === '"' && cell === '') quoted = true;
+    else if (ch === delim) { row.push(cell); cell = ''; }
+    else if (ch === '\n') { row.push(cell); rows.push(row); row = []; cell = ''; }
+    else cell += ch;
+  }
+  row.push(cell);
+  rows.push(row);
+  return rows.filter((r) => r.some((c) => c.trim() !== ''));
+}
+
+/** Numbers from a spreadsheet may carry currency symbols, spaces or a comma decimal. */
+function parseLooseNumber(raw) {
+  const s = String(raw).replace(/[^\d.,-]/g, '').trim();
+  if (!s) return 0;
+  // "1.234,56" (European) vs "1,234.56" (English) — the last separator wins.
+  const lastComma = s.lastIndexOf(',');
+  const lastDot = s.lastIndexOf('.');
+  let normalised = s;
+  if (lastComma > -1 && lastComma > lastDot) normalised = s.replace(/\./g, '').replace(',', '.');
+  else normalised = s.replace(/,/g, '');
+  return clampNum(normalised);
+}
+
+function readImportTable(text) {
+  const rows = parseDelimited(text);
+  if (rows.length < 1) return { error: 'Nothing to read there yet.' };
+
+  const header = rows[0].map(normHeader);
+  const mapping = {};
+  Object.entries(IMPORT_ALIASES).forEach(([field, aliases]) => {
+    const idx = header.findIndex((h) => h && aliases.includes(h));
+    if (idx > -1) mapping[field] = idx;
+  });
+
+  if (mapping.name === undefined && mapping.sku === undefined) {
+    return { error: 'No “Product” or “Code” column found. Make sure the first row you copied is the header row.' };
+  }
+
+  const items = [];
+  rows.slice(1).forEach((r) => {
+    const text2 = (f) => (mapping[f] === undefined ? '' : String(r[mapping[f]] ?? '').trim());
+    const numAt = (f) => (mapping[f] === undefined ? undefined : parseLooseNumber(r[mapping[f]]));
+    const sku = text2('sku');
+    const name = text2('name') || sku;
+    if (!name) return;
+    items.push({
+      sku, name: name.slice(0, 80),
+      category: text2('category'), supplier: text2('supplier'), unit: text2('unit'),
+      stock: numAt('stock'), reorderPoint: numAt('reorderPoint'), reorderQty: numAt('reorderQty'),
+      cost: numAt('cost'), price: numAt('price'),
+    });
+  });
+
+  if (!items.length) return { error: 'Found the header row, but no product rows under it.' };
+  return { items, mapping, matched: Object.keys(mapping) };
+}
+
+/** Existing product with the same code, or failing that the same name. */
+function findExisting(item) {
+  const bySku = item.sku && db.products.find((p) => p.sku && p.sku.toLowerCase() === item.sku.toLowerCase());
+  if (bySku) return bySku;
+  return db.products.find((p) => p.name.toLowerCase() === item.name.toLowerCase());
+}
+
+let importState = { items: null };
+
+function updateImportPreview() {
+  const text = $('#importPaste').value;
+  const box = $('#importPreview');
+  const err = $('#importError');
+  const go = $('#importGo');
+
+  importState.items = null;
+  go.disabled = true;
+  err.hidden = true;
+
+  if (!text.trim()) { box.innerHTML = ''; return; }
+
+  const result = readImportTable(text);
+  if (result.error) {
+    box.innerHTML = '';
+    err.textContent = result.error;
+    err.hidden = false;
+    return;
+  }
+
+  importState.items = result.items;
+  go.disabled = false;
+
+  const existing = result.items.filter((i) => findExisting(i)).length;
+  const fresh = result.items.length - existing;
+  const cols = result.matched.map((f) => GRID_COLS.find((c) => c.key === f)?.label || f);
+  const preview = result.items.slice(0, 6);
+
+  box.innerHTML = `
+    <div class="import-summary">
+      <div><strong>${num(fresh)}</strong> new product${fresh === 1 ? '' : 's'}</div>
+      <div><strong>${num(existing)}</strong> already here</div>
+    </div>
+    <p class="import-cols">Columns picked up: ${cols.map((c) => `<code>${esc(c)}</code>`).join(' ')}</p>
+    <div class="import-table-wrap"><table class="table">
+      <thead><tr><th>Code</th><th>Product</th><th class="num">In stock</th><th class="num">Cost</th><th class="num">Price</th></tr></thead>
+      <tbody>${preview.map((i) => `<tr>
+        <td>${esc(i.sku || '—')}</td><td>${esc(i.name)}</td>
+        <td class="num">${i.stock === undefined ? '—' : num(i.stock)}</td>
+        <td class="num">${i.cost === undefined ? '—' : money(i.cost)}</td>
+        <td class="num">${i.price === undefined ? '—' : money(i.price)}</td>
+      </tr>`).join('')}</tbody>
+    </table></div>
+    ${result.items.length > preview.length ? `<p class="import-cols">…and ${num(result.items.length - preview.length)} more row(s).</p>` : ''}`;
+}
+
+function runImport(e) {
+  if (!importState.items) { e.preventDefault(); return; }
+  const allowUpdate = $('#importUpdate').checked;
+  let added = 0, updated = 0, skipped = 0;
+
+  importState.items.forEach((item) => {
+    const existing = findExisting(item);
+    if (existing) {
+      if (!allowUpdate) { skipped++; return; }
+      // Only overwrite the columns the spreadsheet actually supplied.
+      Object.entries(item).forEach(([k, v]) => {
+        if (v === undefined || v === '') return;
+        existing[k] = v;
+      });
+      updated++;
+    } else {
+      db.products.push(normProduct({ ...item, id: uid(), createdAt: dateKey() }));
+      added++;
+    }
+  });
+
+  save();
+  renderAll();
+  $('#importPaste').value = '';
+  $('#importPreview').innerHTML = '';
+  importState.items = null;
+  toast(`Imported — ${num(added)} added, ${num(updated)} updated${skipped ? `, ${num(skipped)} left alone` : ''}.`);
+}
+
 function importBackup(file) {
   const reader = new FileReader();
   reader.onload = async () => {
@@ -1187,6 +1532,52 @@ function init() {
     if (act === 'restock') openRestockModal(id);
     if (act === 'delete') deleteProduct(id);
     if (act === 'undo-sale') undoSale(id);
+  });
+
+  /* Spreadsheet mode: cell editing and keyboard navigation */
+  $$('#productMode .seg-btn').forEach((b) => b.addEventListener('click', () => showProductMode(b.dataset.mode)));
+  $('#gridAddRow').addEventListener('click', addGridRow);
+
+  $('#productGrid').addEventListener('click', (e) => {
+    const span = e.target.closest('.grid-text');
+    if (span) beginGridEdit(span.closest('.grid-cell'));
+  });
+  $('#productGrid').addEventListener('keydown', (e) => {
+    const span = e.target.closest('.grid-text');
+    if (!span) return;
+    const td = span.closest('.grid-cell');
+    const nav = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] }[e.key];
+
+    if (nav) { if (moveGridFocus(td, nav[0], nav[1])) e.preventDefault(); }
+    else if (e.key === 'Enter' || e.key === 'F2') { e.preventDefault(); beginGridEdit(td); }
+    else if (e.key === 'Tab') { if (moveGridFocus(td, 0, e.shiftKey ? -1 : 1)) e.preventDefault(); }
+    else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); beginGridEdit(td, ''); }
+    // Typing straight over a cell replaces it, exactly like a spreadsheet.
+    else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); beginGridEdit(td, e.key); }
+  });
+
+  /* Spreadsheet import */
+  $('#importProducts').addEventListener('click', () => {
+    $('#importPaste').value = '';
+    $('#importPreview').innerHTML = '';
+    $('#importError').hidden = true;
+    $('#importGo').disabled = true;
+    importState.items = null;
+    $('#importModal').showModal();
+    $('#importPaste').focus();
+  });
+  $('#importPaste').addEventListener('input', updateImportPreview);
+  $('#importPaste').addEventListener('paste', () => setTimeout(updateImportPreview, 0));
+  $('#importUpdate').addEventListener('change', updateImportPreview);
+  $('#importForm').addEventListener('submit', runImport);
+  $('#importPickFile').addEventListener('click', () => $('#importCsvFile').click());
+  $('#importCsvFile').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => { $('#importPaste').value = String(reader.result); updateImportPreview(); };
+    reader.readAsText(file);
+    e.target.value = '';
   });
 
   /* Filters & sorting */
