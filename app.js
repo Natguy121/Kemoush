@@ -590,6 +590,7 @@ function renderProducts() {
         <button class="btn btn-sm" data-act="sell" data-id="${p.id}">Sell…</button>
         <button class="btn btn-sm" data-act="restock" data-id="${p.id}">+ Stock</button>
         <button class="btn btn-sm" data-act="edit" data-id="${p.id}">Edit</button>
+        <button class="btn btn-sm btn-danger" data-act="delete" data-id="${p.id}" title="Remove this product completely">Remove</button>
       </div></td>
     </tr>`;
   }).join('');
@@ -851,8 +852,8 @@ function recordRestock(e) {
   toast(`Added ${num(qty)} — ${p.name} is now at ${num(p.stock)}.`);
 }
 
-async function deleteProduct() {
-  const p = productById($('#p_id').value);
+async function deleteProduct(id) {
+  const p = productById(id || $('#p_id').value);
   if (!p) return;
   const salesCount = db.sales.filter((s) => s.productId === p.id).length;
   const ok = await confirmAction(
@@ -1086,6 +1087,7 @@ function init() {
     if (act === 'sell') openSaleModal(id);
     if (act === 'buy1') buyOne(id);
     if (act === 'restock') openRestockModal(id);
+    if (act === 'delete') deleteProduct(id);
     if (act === 'undo-sale') undoSale(id);
   });
 
