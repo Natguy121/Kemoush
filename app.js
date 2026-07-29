@@ -586,7 +586,8 @@ function renderProducts() {
       <td><span class="pill is-${st}">${STATUS_TEXT[st]}</span></td>
       <td class="num">${money(p.price)}</td>
       <td><div class="cell-actions">
-        <button class="btn btn-sm" data-act="sell" data-id="${p.id}">Sell</button>
+        <button class="btn btn-sm" data-act="buy1" data-id="${p.id}" title="Log one sale instantly">Someone bought it</button>
+        <button class="btn btn-sm" data-act="sell" data-id="${p.id}">Sell…</button>
         <button class="btn btn-sm" data-act="restock" data-id="${p.id}">+ Stock</button>
         <button class="btn btn-sm" data-act="edit" data-id="${p.id}">Edit</button>
       </div></td>
@@ -819,6 +820,17 @@ function recordSale(e) {
   save();
   renderAll();
   toast(`Sale recorded — ${num(p.stock)} ${p.name} left.` + (status(p) !== 'ok' ? ' Time to reorder.' : ''));
+}
+
+function buyOne(id) {
+  const p = productById(id);
+  if (!p) return;
+  if (p.stock < 1) { toast(`${p.name} is out of stock.`); return; }
+  db.sales.push(normSale({ id: uid(), productId: p.id, qty: 1, unitPrice: p.price, buyer: '', date: dateKey() }));
+  p.stock -= 1;
+  save();
+  renderAll();
+  toast(`Sold 1 ${p.name} — ${num(p.stock)} left.` + (status(p) !== 'ok' ? ' Time to reorder.' : ''));
 }
 
 function recordRestock(e) {
@@ -1072,6 +1084,7 @@ function init() {
     const { act, id } = btn.dataset;
     if (act === 'edit') openProductModal(id);
     if (act === 'sell') openSaleModal(id);
+    if (act === 'buy1') buyOne(id);
     if (act === 'restock') openRestockModal(id);
     if (act === 'undo-sale') undoSale(id);
   });
