@@ -55,7 +55,12 @@ let db = emptyDb();
 function load() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return;
+    if (!raw) {
+      // A packaged copy can define window.STARTER_DATA (see build-archive.js)
+      // to open pre-loaded instead of blank — untouched, this is a no-op.
+      if (window.STARTER_DATA) { db = normalise(window.STARTER_DATA); save(); }
+      return;
+    }
     const parsed = JSON.parse(raw);
     if (parsed && typeof parsed === 'object') db = normalise(parsed);
   } catch (err) {
@@ -1654,8 +1659,8 @@ function init() {
     resizeTimer = setTimeout(() => { if (ui.view === 'dashboard') { renderSalesChart(); renderTopSellers(); } }, 150);
   });
 
-  /* First run: offer the demo so the app isn't a blank page */
-  if (!localStorage.getItem(STORAGE_KEY)) {
+  /* First run with nothing loaded — not even starter data — offer the demo. */
+  if (!db.products.length) {
     showView('products');
     toast('Welcome! Add your first product, or load the demo data from Settings.');
   }
