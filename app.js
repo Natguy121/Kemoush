@@ -443,6 +443,104 @@ function renderDashboard() {
   renderSalesChart();
   renderTopSellers();
   renderAttention();
+  renderForecast();
+}
+
+/**
+ * Next-30-days forecast: a simple linear trend over the last 60 days of
+ * sales (last 30 days vs. the 30 before that), extrapolated forward.
+ * Runs entirely on-device — no server, no external AI, nothing leaves
+ * this computer.
+ */
+function forecastNextMonth() {
+  const now = new Date();
+  const recentFrom = dateKey(addDays(now, -29));
+  const recentTo = dateKey(now);
+  const prevFrom = dateKey(addDays(now, -59));
+  const prevTo = dateKey(addDays(now, -30));
+
+  const windowTotals = (from, to) => {
+    const sales = salesInRange(from, to);
+    return { units: sales.reduce((s, x) => s + x.qty, 0), revenue: sales.reduce((s, x) => s + x.qty * x.unitPrice, 0) };
+  };
+  const recent = windowTotals(recentFrom, recentTo);
+  const previous = windowTotals(prevFrom, prevTo);
+
+  const oldestSale = db.sales.reduce((min, s) => (!min || s.date < min ? s.date : min), null);
+  const historyDays = oldestSale ? daysBetween(oldestSale, dateKey(now)) + 1 : 0;
+
+  const dailyRecent = recent.units / 30;
+  const dailyPrevious = previous.units / 30;
+  const trendPerDay = (dailyRecent - dailyPrevious) / 30;
+  let predictedUnits = 0;
+  for (let d = 1; d <= 30; d++) predictedUnits += Math.max(0, dailyRecent + trendPerDay * d);
+  predictedUnits = Math.round(predictedUnits);
+
+  const avgPrice = recent.units > 0 ? recent.revenue / recent.units
+    : previous.units > 0 ? previous.revenue / previous.units : 0;
+  const predictedRevenue = predictedUnits * avgPrice;
+
+  const changePct = previous.units === 0
+    ? (recent.units === 0 ? 0 : null)
+    : ((recent.units - previous.units) / previous.units) * 100;
+
+  const movers = db.products
+    .filter((p) => daysBetween(p.createdAt, dateKey(now)) + 1 >= 60)
+    .map((p) => {
+      const r = unitsSold(p.id, recentFrom, recentTo);
+      const prev = unitsSold(p.id, prevFrom, prevTo);
+      const pct = prev === 0 ? null : ((r - prev) / prev) * 100;
+      return { p, recent: r, previous: prev, pct };
+    })
+    .filter((m) => m.pct !== null && m.recent + m.previous >= 4);
+
+  const slowingDown = movers.filter((m) => m.pct < -10).sort((a, b) => a.pct - b.pct).slice(0, 3);
+  const pickingUp = movers.filter((m) => m.pct > 10).sort((a, b) => b.pct - a.pct).slice(0, 3);
+
+  return { recent, previous, historyDays, predictedUnits, predictedRevenue, changePct, slowingDown, pickingUp };
+}
+
+function renderForecast() {
+  const wrap = $('#forecastBody');
+  const f = forecastNextMonth();
+
+  if (f.historyDays < 45) {
+    wrap.innerHTML = `<p class="empty">Once about two months of sales are recorded, this card will forecast next month and flag which products people are buying more or less of.</p>`;
+    return;
+  }
+
+  const trendClass = f.changePct === null || Math.abs(f.changePct) < 5 ? '' : f.changePct < 0 ? 'is-bad' : 'is-good';
+  const trendText = f.changePct === null
+    ? 'No sales in the last 30 days to compare yet.'
+    : Math.abs(f.changePct) < 5
+      ? '→ About the same pace as the previous 30 days.'
+      : `${f.changePct < 0 ? '▼' : '▲'} ${Math.abs(Math.round(f.changePct))}% ${f.changePct < 0 ? 'fewer' : 'more'} sales than the previous 30 days.`;
+
+  const moverList = (items) => items.length
+    ? items.map((m) => `<div class="trend-item">
+        <span class="p-name">${esc(m.p.name)}</span>
+        <span class="trend-pct ${m.pct < 0 ? 'is-bad' : 'is-good'}">${m.pct < 0 ? '▼' : '▲'} ${Math.abs(Math.round(m.pct))}%</span>
+      </div>`).join('')
+    : `<p class="trend-empty">Nothing standing out.</p>`;
+
+  wrap.innerHTML = `
+    <div class="forecast-headline">
+      <div class="forecast-number">${num(f.predictedUnits)} <span class="forecast-unit">units</span></div>
+      <div class="forecast-sub">≈ ${money(f.predictedRevenue)} predicted over the next 30 days</div>
+      <div class="trend-badge ${trendClass}">${trendText}</div>
+    </div>
+    <div class="grid-2 forecast-movers">
+      <div>
+        <h3 class="forecast-mover-title">People are buying less of</h3>
+        ${moverList(f.slowingDown)}
+      </div>
+      <div>
+        <h3 class="forecast-mover-title">People are buying more of</h3>
+        ${moverList(f.pickingUp)}
+      </div>
+    </div>
+    <p class="card-note">Based only on this shop's own sales history — runs on this device, no internet needed.</p>
+  `;
 }
 
 function renderSalesChart() {

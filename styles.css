@@ -262,6 +262,32 @@ main { padding: clamp(14px, 3vw, 26px); max-width: 1280px; margin: 0 auto; }
 .pill.is-ok::before   { background: var(--good); }
 .pill.is-out { color: var(--critical); }
 
+/* ── Forecast ──────────────────────────────────────────────────────────── */
+.forecast-number { font-size: 34px; font-weight: 700; letter-spacing: -0.02em; }
+.forecast-unit { font-size: 16px; font-weight: 500; color: var(--text-secondary); }
+.forecast-sub { font-size: 13.5px; color: var(--text-secondary); margin-top: 2px; }
+.trend-badge {
+  display: inline-flex; align-items: center; gap: 6px; margin-top: 10px;
+  padding: 6px 12px; border-radius: 999px; font-size: 13px; font-weight: 600;
+  background: var(--surface-2); border: 1px solid var(--border); color: var(--text-secondary);
+}
+.trend-badge.is-good { color: var(--good-ink); }
+.trend-badge.is-bad  { color: var(--critical); }
+.forecast-movers { margin-top: 20px; }
+.forecast-mover-title {
+  font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .02em;
+  color: var(--text-muted); margin-bottom: 6px;
+}
+.trend-item {
+  display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  padding: 8px 0; border-bottom: 1px solid var(--grid); font-size: 14px;
+}
+.trend-item:last-child { border-bottom: 0; }
+.trend-pct { font-weight: 600; font-size: 13px; white-space: nowrap; }
+.trend-pct.is-good { color: var(--good-ink); }
+.trend-pct.is-bad  { color: var(--critical); }
+.trend-empty { font-size: 13px; color: var(--text-muted); padding: 8px 0 0; }
+
 /* ── Charts ────────────────────────────────────────────────────────────── */
 .chart-wrap { position: relative; }
 .chart-wrap svg { display: block; width: 100%; height: auto; overflow: visible; }
