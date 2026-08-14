@@ -24,6 +24,7 @@ your own products.
 | **Overview** | How much stock do I have, what needs attention, how much is moving |
 | **Ask** | Type a question in plain English and get the answer from your own data |
 | **Plan** | Stock run down against the monthly demand plan — where the shortfalls land |
+| **Orders** | What's on order, when it's due, and what has actually turned up |
 | **Products** | The full list — stock level, how fast each one sells, how long it will last |
 | **To buy** | The shopping list for suppliers: what to order, how much, and roughly what it costs |
 | **Sales** | Every sale recorded, plus today's and this month's totals |
@@ -126,6 +127,29 @@ statement about what is coming and beats extrapolating from the last 30 days:
   cover period.
 
 Without a plan, everything falls back to the recorded sales history as before.
+
+## Purchase orders, including the awkward ones
+
+The **Orders** page tracks an order from the moment it's placed to the moment the last box
+turns up — and real deliveries rarely arrive in one tidy piece.
+
+- **One order, several products.** An order goes to a supplier and carries as many lines as
+  it needs, each with its own quantity and unit cost.
+- **Build from buying list** raises the orders straight from what's due, grouped by
+  supplier, with quantities already worked out. They land as drafts to check before sending.
+- **Part deliveries.** *Book in delivery* takes what actually arrived, line by line, and can
+  be used as many times as it takes. Stock goes up by that amount immediately, the rest stays
+  outstanding, and every delivery is kept with its date and note.
+- **Short shipments.** If the rest is never coming, tick *close the rest short*. The order
+  stops expecting it, and anything still needed reappears on the buying list.
+- **Late orders** are flagged the day they pass their expected date, and sorted to the top.
+- **Cancelling** an order releases everything it had on the way.
+
+The important part is what this does to the rest of the app: **stock still owed counts as
+coming**. It's added to cover, drawn into the Plan projection in the month it's due, and
+subtracted from what gets suggested. So a product with an order against it stops appearing
+on the buying list instead of being ordered a second time every time she looks — and if a
+delivery is closed short, it comes straight back.
 
 ## Lead time and the "order by" date
 

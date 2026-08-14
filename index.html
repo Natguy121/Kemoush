@@ -31,6 +31,7 @@
   <button class="tab" role="tab" data-view="products">Products</button>
   <button class="tab" role="tab" data-view="plan">Plan <span class="tab-badge" id="planBadge" hidden>0</span></button>
   <button class="tab" role="tab" data-view="reorder">To&nbsp;buy <span class="tab-badge" id="reorderBadge" hidden>0</span></button>
+  <button class="tab" role="tab" data-view="orders">Orders <span class="tab-badge" id="ordersBadge" hidden>0</span></button>
   <button class="tab" role="tab" data-view="sales">Sales</button>
   <button class="tab" role="tab" data-view="data">Settings</button>
 </nav>
@@ -198,6 +199,7 @@
               <th>Product</th>
               <th>Supplier</th>
               <th class="num">In stock</th>
+              <th class="num">On order</th>
               <th class="num">Used per week</th>
               <th>Order by</th>
               <th class="num">Order this much</th>
@@ -207,12 +209,35 @@
           </thead>
           <tbody></tbody>
           <tfoot>
-            <tr><td colspan="6" class="num strong">Total</td><td class="num strong" id="reorderTotal"></td><td></td></tr>
+            <tr><td colspan="7" class="num strong">Total</td><td class="num strong" id="reorderTotal"></td><td></td></tr>
           </tfoot>
         </table>
       </div>
       <p class="empty" id="reorderEmpty" hidden>Nothing to order right now — everything is above its alert level and still inside its lead time. 🎉</p>
     </div>
+  </section>
+
+  <!-- ───────────────────────── Orders ───────────────────────── -->
+  <section class="view" id="view-orders">
+    <div class="toolbar">
+      <div class="toolbar-text">
+        <h2 class="view-title">Purchase orders</h2>
+        <p class="muted">What's on order, when it's due, and what has actually turned up.
+          Stock still owed counts towards cover, so nothing gets ordered twice.</p>
+      </div>
+      <select id="orderFilter" class="input input-select" aria-label="Filter orders">
+        <option value="live">Open &amp; late</option>
+        <option value="all">All orders</option>
+        <option value="late">Late only</option>
+        <option value="done">Finished</option>
+      </select>
+      <button class="btn" id="ordersFromList">Build from buying list</button>
+      <button class="btn btn-primary" id="newOrder">+ New order</button>
+    </div>
+    <div class="stat-row" id="orderStatRow"></div>
+    <div id="orderList"></div>
+    <p class="empty" id="ordersEmpty" hidden>No orders yet. Use <strong>Build from buying list</strong>
+      to raise them straight from what's due, or <strong>+ New order</strong> to enter one by hand.</p>
   </section>
 
   <!-- ───────────────────────── Sales ───────────────────────── -->
@@ -370,6 +395,66 @@
       <span class="spacer"></span>
       <button class="btn" type="button" data-close>Cancel</button>
       <button class="btn btn-primary" type="submit">Add to stock</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="modal modal-lg" id="orderModal">
+  <form method="dialog" id="orderForm">
+    <h2 class="modal-title" id="orderModalTitle">New purchase order</h2>
+    <input type="hidden" id="o_id">
+    <div class="form-grid">
+      <label class="field"><span>Supplier</span>
+        <input class="input" id="o_supplier" list="supplierList" maxlength="60" placeholder="Who it's going to">
+        <datalist id="supplierList"></datalist></label>
+      <label class="field"><span>Your reference</span>
+        <input class="input" id="o_ref" maxlength="40" placeholder="PO number, optional"></label>
+      <label class="field"><span>Ordered on</span>
+        <input class="input" id="o_orderedOn" type="date" required></label>
+      <label class="field"><span>Expected</span>
+        <input class="input" id="o_expectedOn" type="date">
+        <small class="hint">Leave blank if the supplier hasn't said.</small></label>
+    </div>
+
+    <div class="order-lines" id="orderLines"></div>
+    <div class="btn-row">
+      <button class="btn btn-sm" type="button" id="addOrderLine">+ Add a product</button>
+      <span class="spacer"></span>
+      <span class="order-total">Order total <strong id="orderFormTotal">—</strong></span>
+    </div>
+
+    <label class="field span-2" style="margin-top:14px"><span>Notes</span>
+      <input class="input" id="o_notes" maxlength="200" placeholder="Anything worth remembering"></label>
+
+    <p class="form-error" id="orderError" hidden></p>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" type="button" id="cancelOrder" hidden>Cancel this order</button>
+      <span class="spacer"></span>
+      <button class="btn" type="button" data-close>Close</button>
+      <button class="btn btn-primary" type="submit">Save order</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="modal modal-lg" id="receiveModal">
+  <form method="dialog" id="receiveForm">
+    <h2 class="modal-title">Book in a delivery</h2>
+    <p class="muted" id="receiveHead"></p>
+    <div class="form-grid">
+      <label class="field"><span>Arrived on</span>
+        <input class="input" id="rc_date" type="date" required></label>
+      <label class="field"><span>Delivery note</span>
+        <input class="input" id="rc_note" maxlength="60" placeholder="optional"></label>
+    </div>
+    <div class="receive-lines" id="receiveLines"></div>
+    <label class="check" style="margin-top:14px"><input type="checkbox" id="rc_closeShort">
+      <span>Nothing more is coming — close the rest of this order short</span></label>
+    <p class="form-error" id="receiveError" hidden></p>
+    <div class="modal-foot">
+      <button class="btn btn-sm" type="button" id="receiveAll">Fill in everything outstanding</button>
+      <span class="spacer"></span>
+      <button class="btn" type="button" data-close>Cancel</button>
+      <button class="btn btn-primary" type="submit">Book it in</button>
     </div>
   </form>
 </dialog>

@@ -321,6 +321,7 @@ main { padding: clamp(14px, 3vw, 26px); max-width: 1280px; margin: 0 auto; }
 .plan-month { text-align: right; white-space: nowrap; }
 .plan-closing { display: block; font-weight: 600; }
 .plan-demand { display: block; font-size: 11.5px; color: var(--text-muted); }
+.plan-in { color: var(--good-ink); font-weight: 600; }
 /* A shortfall is called out by weight and a marker, not by colour alone. */
 .plan-cell.is-short { background: var(--critical-soft); }
 .plan-cell.is-short .plan-closing { color: var(--critical); }
@@ -328,6 +329,59 @@ main { padding: clamp(14px, 3vw, 26px); max-width: 1280px; margin: 0 auto; }
 .plan-idle .plan-closing { color: var(--text-muted); font-weight: 400; }
 .plan-short-label { font-size: 12px; color: var(--critical); font-weight: 600; }
 .plan-ok-label { font-size: 12px; color: var(--text-muted); }
+
+/* ── Purchase orders ───────────────────────────────────────────────────── */
+.order-card {
+  background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow); margin-bottom: 14px; overflow: hidden;
+}
+.order-card.is-late { border-color: var(--critical); }
+.order-head {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 14px 16px; border-bottom: 1px solid var(--grid);
+}
+.order-who { font-weight: 600; }
+.order-meta { font-size: 12.5px; color: var(--text-muted); }
+.order-head .btn { margin-left: 0; }
+.order-progress {
+  flex: 0 0 140px; height: 6px; border-radius: 999px;
+  background: var(--surface-2); overflow: hidden; border: 1px solid var(--border);
+}
+.order-progress span { display: block; height: 100%; background: var(--good); }
+.order-body { padding: 4px 16px 14px; }
+.order-line {
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  padding: 8px 0; border-bottom: 1px solid var(--grid); font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.order-line:last-child { border-bottom: 0; }
+.order-line-name { flex: 1 1 200px; font-weight: 500; }
+.order-line-qty { color: var(--text-secondary); }
+.order-line-qty .short { color: var(--critical); font-weight: 600; }
+.order-line-qty .done { color: var(--good-ink); font-weight: 600; }
+.order-total { font-size: 13px; color: var(--text-secondary); }
+.order-receipts { margin-top: 10px; font-size: 12.5px; color: var(--text-muted); }
+.order-receipts li { list-style: none; padding: 2px 0; }
+
+.pill.is-open::before     { background: var(--axis); }
+.pill.is-part::before     { background: var(--warning); }
+.pill.is-received::before { background: var(--good); }
+.pill.is-closed::before   { background: var(--serious); }
+.pill.is-cancelled::before{ background: var(--axis); }
+.pill.is-late-order { color: var(--critical); }
+.pill.is-late-order::before { background: var(--critical); }
+
+.order-lines, .receive-lines { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+.order-line-row, .receive-line-row {
+  display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap;
+  padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.order-line-row .field { flex: 1 1 150px; }
+.order-line-row .field-sm { flex: 0 1 110px; }
+.receive-line-row .field { flex: 0 1 130px; }
+.receive-line-name { flex: 1 1 180px; font-weight: 500; font-size: 14px; }
+.receive-line-owed { font-size: 12.5px; color: var(--text-muted); }
 
 /* ── Import preview ────────────────────────────────────────────────────── */
 .check { display: inline-flex; align-items: center; gap: 8px; font-size: 13.5px; cursor: pointer; }

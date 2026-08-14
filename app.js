@@ -96,6 +96,7 @@ const emptyDb = () => ({
   products: [],
   sales: [],
   restocks: [],
+  orders: [],
   settings: { shopName: '', currency: '$', coverDays: 30, defaultLeadTimeDays: 0 },
 });
 
@@ -125,9 +126,43 @@ function normalise(input) {
     products: Array.isArray(input.products) ? input.products.map(normProduct) : [],
     sales: Array.isArray(input.sales) ? input.sales.map(normSale).filter(Boolean) : [],
     restocks: Array.isArray(input.restocks) ? input.restocks.map(normRestock).filter(Boolean) : [],
+    orders: Array.isArray(input.orders) ? input.orders.map(normOrder).filter(Boolean) : [],
     settings: { ...base.settings, ...(input.settings || {}) },
   };
 }
+
+/* A purchase order is several lines to one supplier, received over one or
+   more deliveries — so a line tracks what was ordered and what has actually
+   turned up, which are very often not the same number. */
+
+const normOrderLine = (l) => (l && l.productId ? {
+  productId: String(l.productId),
+  qty: clampNum(l.qty),
+  received: clampNum(l.received),
+  unitCost: clampNum(l.unitCost),
+} : null);
+
+const normReceipt = (r) => (r && Array.isArray(r.lines) ? {
+  id: r.id || uid(),
+  date: r.date || dateKey(),
+  note: String(r.note || ''),
+  lines: r.lines
+    .map((l) => (l && l.productId ? { productId: String(l.productId), qty: clampNum(l.qty) } : null))
+    .filter(Boolean),
+} : null);
+
+const normOrder = (o) => (o && Array.isArray(o.lines) ? {
+  id: o.id || uid(),
+  ref: String(o.ref || ''),
+  supplier: String(o.supplier || ''),
+  orderedOn: o.orderedOn || dateKey(),
+  expectedOn: o.expectedOn || '',
+  cancelled: !!o.cancelled,
+  closed: !!o.closed,
+  notes: String(o.notes || ''),
+  lines: o.lines.map(normOrderLine).filter(Boolean),
+  receipts: Array.isArray(o.receipts) ? o.receipts.map(normReceipt).filter(Boolean) : [],
+} : null);
 
 /** Monthly demand plan: { "2026-08": 120, … }, junk keys dropped. */
 function normDemand(input) {
@@ -305,12 +340,15 @@ function daysOfCover(p) {
   if (hasPlan(p)) {
     const start = monthKey();
     const dayOfMonth = new Date().getDate();
+    const incoming = incomingByMonth(p.id);
     let running = p.stock;
     let elapsed = 0;
     for (let i = 0; i < 48; i++) {
       const key = addMonths(start, i);
       const dim = daysInMonth(key);
       const available = i === 0 ? dim - dayOfMonth + 1 : dim;
+      // Stock already on order lands at the start of the month it's due.
+      running += clampNum(incoming[key]);
       const planned = clampNum(p.demand[key]) * (available / dim);
       if (planned > 0 && running - planned < 0) {
         return elapsed + Math.floor((running / planned) * available);
@@ -321,7 +359,7 @@ function daysOfCover(p) {
     return Infinity;
   }
   const v = salesRate(p);
-  return v > 0 ? p.stock / v : Infinity;
+  return v > 0 ? (p.stock + onOrder(p.id)) / v : Infinity;
 }
 
 /**
@@ -331,15 +369,18 @@ function daysOfCover(p) {
  */
 function projectPlan(p, months = 12) {
   const start = monthKey();
+  const incoming = incomingByMonth(p.id);
   let running = p.stock;
   let short = null;
   const row = [];
   for (let i = 0; i < months; i++) {
     const key = addMonths(start, i);
+    const arriving = clampNum(incoming[key]);
     const planned = clampNum(p.demand?.[key]);
+    running += arriving;
     running -= planned;
     if (short === null && running < 0) short = key;
-    row.push({ key, planned, closing: running });
+    row.push({ key, planned, arriving, closing: running });
   }
   return { row, short };
 }
@@ -351,6 +392,59 @@ function status(p) {
 }
 
 const STATUS_TEXT = { out: 'Out of stock', low: 'Running low', ok: 'Well stocked' };
+
+/* ── Purchase orders ───────────────────────────────────────────────────── */
+
+const lineOutstanding = (l) => Math.max(0, l.qty - l.received);
+const orderOutstanding = (o) => o.lines.reduce((s, l) => s + lineOutstanding(l), 0);
+const orderOrdered = (o) => o.lines.reduce((s, l) => s + l.qty, 0);
+const orderReceived = (o) => o.lines.reduce((s, l) => s + l.received, 0);
+const orderValue = (o) => o.lines.reduce((s, l) => s + l.qty * l.unitCost, 0);
+
+/** An order still owing stock, and not cancelled or closed short. */
+const orderIsOpen = (o) => !o.cancelled && !o.closed && orderOutstanding(o) > 0;
+const openOrders = () => db.orders.filter(orderIsOpen);
+
+function orderStatus(o) {
+  if (o.cancelled) return 'cancelled';
+  if (orderOutstanding(o) === 0) return 'received';
+  if (o.closed) return 'closed';
+  return orderReceived(o) > 0 ? 'part' : 'open';
+}
+
+const ORDER_STATUS_TEXT = {
+  open: 'Waiting', part: 'Part delivered', received: 'Complete',
+  closed: 'Closed short', cancelled: 'Cancelled',
+};
+
+/** Overdue: still owed, and the date it was promised for has gone past. */
+const orderIsLate = (o) => orderIsOpen(o) && o.expectedOn && o.expectedOn < dateKey();
+
+/** Units of a product already on order and still to come. */
+function onOrder(productId) {
+  return openOrders().reduce((s, o) => s + o.lines
+    .filter((l) => l.productId === productId)
+    .reduce((t, l) => t + lineOutstanding(l), 0), 0);
+}
+
+/**
+ * When outstanding stock is due, keyed by month. Anything already overdue
+ * is counted against the current month — it is still coming, just late.
+ */
+function incomingByMonth(productId) {
+  const now = monthKey();
+  const map = {};
+  openOrders().forEach((o) => {
+    const qty = o.lines
+      .filter((l) => l.productId === productId)
+      .reduce((t, l) => t + lineOutstanding(l), 0);
+    if (!qty) return;
+    let key = o.expectedOn ? o.expectedOn.slice(0, 7) : now;
+    if (key < now) key = now;
+    map[key] = (map[key] || 0) + qty;
+  });
+  return map;
+}
 
 /** Days this supplier takes to deliver — the product's own, or the default. */
 function leadTime(p) {
@@ -384,7 +478,10 @@ function suggestedOrder(p) {
   const horizon = coverDays + leadTime(p);
   // Size against the plan when there is one, so a ramp-up isn't under-ordered.
   const need = plannedDemandOverDays(p, horizon) ?? salesRate(p) * horizon;
-  let qty = Math.ceil(need + p.reorderPoint - p.stock);
+  // Whatever is already on its way counts — otherwise the same shortage
+  // gets ordered again every time she looks at the list.
+  let qty = Math.ceil(need + p.reorderPoint - p.stock - onOrder(p.id));
+  if (qty <= 0) return 0;
   if (qty < p.reorderQty) qty = p.reorderQty;
   if (p.reorderQty > 1) qty = Math.ceil(qty / p.reorderQty) * p.reorderQty;
   return Math.max(1, qty);
@@ -393,10 +490,13 @@ function suggestedOrder(p) {
 /**
  * Anything low or out — plus anything whose ordering deadline has arrived,
  * which is the case a plain stock level hides: a product can look well
- * stocked and still be late to reorder if the supplier is slow.
+ * stocked and still be late to reorder if the supplier is slow. Products
+ * already covered by an open order drop off the list.
  */
 const needsOrder = () => db.products.filter((p) => (
-  !p.discontinued && (status(p) !== 'ok' || daysUntilOrder(p) <= 0)
+  !p.discontinued
+  && (status(p) !== 'ok' || daysUntilOrder(p) <= 0)
+  && suggestedOrder(p) > 0
 ));
 
 /* ── Toast & confirm ───────────────────────────────────────────────────── */
@@ -599,6 +699,7 @@ function renderAll() {
   renderProducts();
   renderPlan();
   renderReorder();
+  renderOrders();
   renderSales();
   renderSettings();
 }
@@ -1264,6 +1365,7 @@ function describeProduct(p) {
   const d = daysUntilOrder(p);
   const bits = [
     li('In stock:', `${num(p.stock)}${p.unit ? ` ${esc(p.unit)}` : ''}`),
+    ...(onOrder(p.id) ? [li('On order:', `${num(onOrder(p.id))} still to come`)] : []),
     li('Status:', STATUS_TEXT[status(p)].toLowerCase()),
     li('Lasts:', cover === Infinity ? 'nothing planned or selling, so it is not running down' : `about ${num(Math.floor(cover))} days`),
   ];
@@ -1330,6 +1432,27 @@ function answerShortfalls(month) {
   shorts.sort((a, b) => (a.short < b.short ? -1 : 1));
   return `<p><strong>${num(shorts.length)}</strong> product${shorts.length === 1 ? '' : 's'} run short on the plan:</p>`
     + listOf(shorts.map(({ p, short }) => li(`${esc(p.name)}:`, `<span class="is-late">${esc(monthLabel(short))}</span>`)));
+}
+
+function answerOrders() {
+  const open = openOrders();
+  if (!open.length) return `<p>${pick('noorders', [
+    'Nothing is on order at the moment.',
+    'No open orders — nothing due in.',
+    'You have nothing outstanding with any supplier right now.',
+  ])}</p>`;
+  const late = open.filter(orderIsLate);
+  const items = open.slice(0, 8).map((o) => {
+    const when = !o.expectedOn ? 'no date given'
+      : orderIsLate(o) ? `<span class="is-late">${num(daysBetween(o.expectedOn, dateKey()))} days late</span>`
+      : `due ${esc(longDate(o.expectedOn))}`;
+    return li(`${esc(o.supplier || 'No supplier')}${o.ref ? ` (${esc(o.ref)})` : ''}:`,
+      `${num(orderOutstanding(o))} units owed — ${when}`);
+  });
+  return `<p><strong>${num(open.length)}</strong> open order${open.length === 1 ? '' : 's'}`
+    + `${late.length ? `, <strong class="is-late">${num(late.length)} late</strong>` : ', all on schedule'}.</p>`
+    + listOf(items)
+    + (open.length > 8 ? `<p>…and ${num(open.length - 8)} more on the Orders page.</p>` : '');
 }
 
 function answerMovers() {
@@ -1420,6 +1543,9 @@ function answerQuestion(raw) {
       + `<p>What you are already holding is worth about <strong>${esc(money(stockValue))}</strong> at cost.</p>`;
   }
 
+  if (/\b(on order|open orders|outstanding|deliver\w*|late order|arriv\w*|due in|po\b|purchase order|supplier owe)\b/.test(l)) return answerOrders();
+  // "Anything late?" means a late delivery once there are orders to be late.
+  if (/\b(late|overdue|chase|behind)\b/.test(l) && openOrders().length) return answerOrders();
   if (/short|shortfall|run out|runs out|negative|gap/.test(l) || (month && /plan/.test(l))) return answerShortfalls(month);
   if (month) return answerShortfalls(month);
   if (/order|buy|purchase|reorder|replenish|urgent|late|overdue|today|this week/.test(l)) return answerToBuy();
@@ -1535,10 +1661,14 @@ function renderPlan() {
     <td class="num strong">${num(p.stock)}</td>
     ${row.map((c) => {
       const isShort = c.closing < 0;
-      const idle = c.planned === 0 && !isShort;
+      const idle = c.planned === 0 && c.arriving === 0 && !isShort;
+      const moves = [
+        c.arriving ? `<span class="plan-in">+${num(c.arriving)}</span>` : '',
+        c.planned ? `−${num(c.planned)}` : '',
+      ].filter(Boolean).join(' ') || '·';
       return `<td class="plan-cell plan-month${isShort ? ' is-short' : ''}${c.key === short ? ' is-first-short' : ''}${idle ? ' plan-idle' : ''}">
         <span class="plan-closing">${num(c.closing)}</span>
-        <span class="plan-demand">${c.planned ? `−${num(c.planned)}` : '·'}</span>
+        <span class="plan-demand">${moves}</span>
       </td>`;
     }).join('')}
   </tr>`).join('');
@@ -1585,6 +1715,7 @@ function renderReorder() {
         <div class="p-meta">${esc(p.sku || p.category || '—')} · ${STATUS_TEXT[status(p)].toLowerCase()}</div></td>
       <td>${esc(p.supplier || '—')}</td>
       <td class="num">${num(p.stock)}</td>
+      <td class="num">${onOrder(p.id) ? num(onOrder(p.id)) : '<span class="muted">—</span>'}</td>
       <td class="num">${num(Math.round(velocity(p) * 7 * 10) / 10)}</td>
       <td>${orderByCell(p)}</td>
       <td class="num strong">${num(qty)}${p.unit ? ` <span class="p-meta">${esc(p.unit)}</span>` : ''}</td>
@@ -1598,6 +1729,321 @@ function renderReorder() {
   $('#reorderTotal').textContent = money(total);
   $('#reorderEmpty').hidden = rows.length > 0;
   $('#reorderTable').hidden = rows.length === 0;
+}
+
+/* Orders ------------------------------------------------------------------- */
+
+function renderOrdersBadge() {
+  const badge = $('#ordersBadge');
+  const n = db.orders.filter(orderIsLate).length || openOrders().length;
+  badge.textContent = n;
+  badge.hidden = n === 0;
+  badge.classList.toggle('is-late', db.orders.filter(orderIsLate).length > 0);
+}
+
+function visibleOrders() {
+  const f = $('#orderFilter').value;
+  const rows = [...db.orders];
+  const live = rows.filter(orderIsOpen);
+  if (f === 'all') return rows.sort((a, b) => (a.orderedOn < b.orderedOn ? 1 : -1));
+  if (f === 'late') return live.filter(orderIsLate);
+  if (f === 'done') return rows.filter((o) => !orderIsOpen(o)).sort((a, b) => (a.orderedOn < b.orderedOn ? 1 : -1));
+  // Live: soonest due first, undated last.
+  return live.sort((a, b) => {
+    if (!a.expectedOn && !b.expectedOn) return 0;
+    if (!a.expectedOn) return 1;
+    if (!b.expectedOn) return -1;
+    return a.expectedOn < b.expectedOn ? -1 : 1;
+  });
+}
+
+function renderOrders() {
+  $('#supplierList').innerHTML = [...new Set(db.products.map((p) => p.supplier).filter(Boolean))]
+    .sort().map((s) => `<option value="${esc(s)}"></option>`).join('');
+
+  const late = db.orders.filter(orderIsLate);
+  const open = openOrders();
+  const owed = open.reduce((s, o) => s + o.lines.reduce((t, l) => t + lineOutstanding(l) * l.unitCost, 0), 0);
+  $('#orderStatRow').innerHTML = db.orders.length ? [
+    statTile({ label: 'Open orders', value: num(open.length), sub: `${num(open.reduce((s, o) => s + orderOutstanding(o), 0))} units still owed` }),
+    statTile({
+      label: 'Late', value: num(late.length),
+      sub: late.length ? 'past their promised date' : 'all on schedule',
+      subClass: late.length ? 'is-bad' : 'is-good', alert: late.length > 0,
+    }),
+    statTile({ label: 'Value outstanding', value: money(owed), sub: 'still to be delivered' }),
+  ].join('') : '';
+
+  const rows = visibleOrders();
+  $('#ordersEmpty').hidden = db.orders.length > 0;
+
+  $('#orderList').innerHTML = rows.length ? rows.map((o) => {
+    const st = orderStatus(o);
+    const isLate = orderIsLate(o);
+    const ordered = orderOrdered(o);
+    const got = orderReceived(o);
+    const pct = ordered > 0 ? Math.min(100, Math.round((got / ordered) * 100)) : 0;
+    const due = o.expectedOn
+      ? `${isLate ? 'was due ' : 'due '}${esc(longDate(o.expectedOn))}${isLate ? ` — ${num(daysBetween(o.expectedOn, dateKey()))} days late` : ''}`
+      : 'no date given';
+
+    return `<div class="order-card${isLate ? ' is-late' : ''}" data-id="${o.id}">
+      <div class="order-head">
+        <div>
+          <div class="order-who">${esc(o.supplier || 'No supplier')}${o.ref ? ` <span class="order-meta">· ${esc(o.ref)}</span>` : ''}</div>
+          <div class="order-meta">Ordered ${esc(longDate(o.orderedOn))} · ${due}</div>
+        </div>
+        <span class="pill is-${st}${isLate ? ' is-late-order' : ''}">${isLate ? 'Late' : ORDER_STATUS_TEXT[st]}</span>
+        <div class="order-progress" title="${num(got)} of ${num(ordered)} received"><span style="width:${pct}%"></span></div>
+        <span class="spacer"></span>
+        ${orderIsOpen(o) ? `<button class="btn btn-sm btn-primary" data-act="receive-order" data-id="${o.id}">Book in delivery</button>` : ''}
+        <button class="btn btn-sm" data-act="edit-order" data-id="${o.id}">${orderIsOpen(o) ? 'Edit' : 'View'}</button>
+        <button class="btn btn-sm" data-act="print-order" data-id="${o.id}">Print</button>
+      </div>
+      <div class="order-body">
+        ${o.lines.map((l) => {
+          const p = productById(l.productId);
+          const owedQty = lineOutstanding(l);
+          return `<div class="order-line">
+            <span class="order-line-name">${esc(p ? p.name : 'Deleted product')}</span>
+            <span class="order-line-qty">${num(l.received)} of ${num(l.qty)} in
+              ${owedQty > 0 ? `· <span class="short">${num(owedQty)} still owed</span>` : '· <span class="done">complete</span>'}</span>
+            <span class="order-line-qty">${money(l.qty * l.unitCost)}</span>
+          </div>`;
+        }).join('')}
+        ${o.notes ? `<p class="order-meta" style="margin-top:10px">${esc(o.notes)}</p>` : ''}
+        ${o.receipts.length ? `<ul class="order-receipts">${o.receipts.map((r) => `<li>Delivered ${esc(longDate(r.date))} — ${
+          r.lines.map((rl) => { const p = productById(rl.productId); return `${num(rl.qty)} ${esc(p ? p.name : '?')}`; }).join(', ')
+        }${r.note ? ` (${esc(r.note)})` : ''}</li>`).join('')}</ul>` : ''}
+      </div>
+    </div>`;
+  }).join('') : (db.orders.length ? '<p class="empty">Nothing matches that filter.</p>' : '');
+
+  renderOrdersBadge();
+}
+
+/* Building and editing an order ------------------------------------------- */
+
+let orderDraft = [];
+
+function orderLineRow(line, i) {
+  const opts = [...db.products].sort((a, b) => a.name.localeCompare(b.name))
+    .map((p) => `<option value="${p.id}"${p.id === line.productId ? ' selected' : ''}>${esc(p.name)}${p.sku ? ` (${esc(p.sku)})` : ''}</option>`).join('');
+  return `<div class="order-line-row" data-i="${i}">
+    <label class="field"><span>Product</span>
+      <select class="input input-select" data-line="productId">${opts}</select></label>
+    <label class="field field-sm"><span>Quantity</span>
+      <input class="input" type="number" min="0" step="1" data-line="qty" value="${line.qty}"></label>
+    <label class="field field-sm"><span>Unit cost</span>
+      <input class="input" type="number" min="0" step="0.01" data-line="unitCost" value="${line.unitCost}"></label>
+    <button class="btn btn-sm btn-ghost" type="button" data-act="drop-line" data-i="${i}">Remove</button>
+  </div>`;
+}
+
+function renderOrderLines() {
+  $('#orderLines').innerHTML = orderDraft.map(orderLineRow).join('')
+    || '<p class="muted">No products on this order yet.</p>';
+  const total = orderDraft.reduce((s, l) => s + clampNum(l.qty) * clampNum(l.unitCost), 0);
+  $('#orderFormTotal').textContent = total > 0 ? money(total) : '—';
+}
+
+function readOrderLines() {
+  orderDraft = $$('#orderLines .order-line-row').map((row) => ({
+    productId: $('[data-line="productId"]', row).value,
+    qty: clampNum($('[data-line="qty"]', row).value),
+    unitCost: clampNum($('[data-line="unitCost"]', row).value),
+    received: orderDraft[Number(row.dataset.i)]?.received || 0,
+  }));
+}
+
+function openOrderModal(id, seedLines) {
+  const o = id ? db.orders.find((x) => x.id === id) : null;
+  if (!db.products.length) { toast('Add some products first.'); showView('products'); return; }
+
+  $('#orderModalTitle').textContent = o ? 'Purchase order' : 'New purchase order';
+  $('#o_id').value = o ? o.id : '';
+  $('#o_supplier').value = o ? o.supplier : (seedLines?.supplier || '');
+  $('#o_ref').value = o ? o.ref : '';
+  $('#o_orderedOn').value = o ? o.orderedOn : dateKey();
+  $('#o_expectedOn').value = o ? o.expectedOn : (seedLines?.expectedOn || '');
+  $('#o_notes').value = o ? o.notes : '';
+  $('#orderError').hidden = true;
+  $('#cancelOrder').hidden = !o || !orderIsOpen(o);
+
+  orderDraft = o
+    ? o.lines.map((l) => ({ ...l }))
+    : (seedLines?.lines || [{ productId: db.products[0].id, qty: 1, unitCost: db.products[0].cost, received: 0 }]);
+  renderOrderLines();
+  $('#orderModal').showModal();
+}
+
+function saveOrder(e) {
+  readOrderLines();
+  const lines = orderDraft.filter((l) => l.productId && l.qty > 0);
+  if (!lines.length) {
+    e.preventDefault();
+    $('#orderError').textContent = 'Put at least one product with a quantity on the order.';
+    $('#orderError').hidden = false;
+    return;
+  }
+  const id = $('#o_id').value;
+  const fields = {
+    supplier: $('#o_supplier').value.trim(),
+    ref: $('#o_ref').value.trim(),
+    orderedOn: $('#o_orderedOn').value || dateKey(),
+    expectedOn: $('#o_expectedOn').value || '',
+    notes: $('#o_notes').value.trim(),
+    lines,
+  };
+
+  if (id) {
+    const o = db.orders.find((x) => x.id === id);
+    // Keep what has already been booked in — editing the paperwork must not
+    // silently un-receive a delivery that physically arrived.
+    fields.lines = lines.map((l) => {
+      const was = o.lines.find((x) => x.productId === l.productId);
+      return { ...l, received: Math.min(l.qty, was ? was.received : 0) };
+    });
+    Object.assign(o, fields);
+    toast('Order updated.');
+  } else {
+    db.orders.push(normOrder({ ...fields, id: uid() }));
+    toast('Order raised.');
+  }
+  save();
+  renderAll();
+}
+
+async function cancelOrder() {
+  const o = db.orders.find((x) => x.id === $('#o_id').value);
+  if (!o) return;
+  const ok = await confirmAction('Cancel this order?',
+    `${num(orderOutstanding(o))} units still owed from ${o.supplier || 'this supplier'} will stop counting towards your cover.`, 'Cancel the order');
+  if (!ok) return;
+  o.cancelled = true;
+  save();
+  renderAll();
+  toast('Order cancelled.');
+}
+
+/** Raise draft orders straight from the buying list, one per supplier. */
+function ordersFromBuyingList() {
+  const rows = needsOrder();
+  if (!rows.length) { toast('Nothing on the buying list right now.'); return; }
+  const bySupplier = new Map();
+  rows.forEach((p) => {
+    const key = p.supplier || '';
+    if (!bySupplier.has(key)) bySupplier.set(key, []);
+    bySupplier.get(key).push(p);
+  });
+  // Always the same shape of result: drafts on the Orders page, ready to be
+  // checked and edited. Behaving differently for one supplier than for
+  // several just makes the button unpredictable.
+  bySupplier.forEach((items, supplier) => {
+    db.orders.push(normOrder({
+      id: uid(), supplier,
+      orderedOn: dateKey(),
+      expectedOn: dateKey(addDays(new Date(), leadTime(items[0]) || 0)),
+      lines: items.map((p) => ({ productId: p.id, qty: suggestedOrder(p), unitCost: p.cost, received: 0 })),
+    }));
+  });
+  save();
+  renderAll();
+  showView('orders');
+  toast(`${num(bySupplier.size)} order${bySupplier.size === 1 ? '' : 's'} raised from ${num(rows.length)} product${rows.length === 1 ? '' : 's'} — check them over before sending.`);
+}
+
+/* Booking in a delivery ---------------------------------------------------- */
+
+let receivingId = null;
+
+function openReceiveModal(id) {
+  const o = db.orders.find((x) => x.id === id);
+  if (!o) return;
+  receivingId = id;
+  $('#receiveHead').textContent = `${o.supplier || 'Order'}${o.ref ? ` · ${o.ref}` : ''} — ${num(orderOutstanding(o))} units still owed.`;
+  $('#rc_date').value = dateKey();
+  $('#rc_note').value = '';
+  $('#rc_closeShort').checked = false;
+  $('#receiveError').hidden = true;
+
+  $('#receiveLines').innerHTML = o.lines.map((l, i) => {
+    const p = productById(l.productId);
+    const owed = lineOutstanding(l);
+    return `<div class="receive-line-row" data-i="${i}">
+      <div class="receive-line-name">${esc(p ? p.name : 'Deleted product')}
+        <div class="receive-line-owed">${owed > 0 ? `${num(owed)} still owed of ${num(l.qty)}` : 'fully delivered'}</div></div>
+      <label class="field"><span>Arrived now</span>
+        <input class="input" type="number" min="0" max="${owed}" step="1" data-owed="${owed}" value="0"${owed === 0 ? ' disabled' : ''}></label>
+    </div>`;
+  }).join('');
+  $('#receiveModal').showModal();
+}
+
+function receiveAllOutstanding() {
+  $$('#receiveLines input[type="number"]').forEach((inp) => { inp.value = inp.dataset.owed; });
+}
+
+function saveReceipt(e) {
+  const o = db.orders.find((x) => x.id === receivingId);
+  if (!o) { e.preventDefault(); return; }
+
+  const got = $$('#receiveLines .receive-line-row').map((row) => {
+    const i = Number(row.dataset.i);
+    const inp = $('input[type="number"]', row);
+    return { i, qty: Math.min(clampNum(inp.value), clampNum(inp.dataset.owed)) };
+  }).filter((g) => g.qty > 0);
+
+  const closeShort = $('#rc_closeShort').checked;
+  if (!got.length && !closeShort) {
+    e.preventDefault();
+    $('#receiveError').textContent = 'Enter what actually arrived, or tick the box to close the rest short.';
+    $('#receiveError').hidden = false;
+    return;
+  }
+
+  const date = $('#rc_date').value || dateKey();
+  const receiptLines = [];
+  got.forEach(({ i, qty }) => {
+    const line = o.lines[i];
+    line.received += qty;
+    const p = productById(line.productId);
+    if (p) p.stock += qty;
+    // A delivery is a restock, so it shows up in the stock history too.
+    db.restocks.push(normRestock({ id: uid(), productId: line.productId, qty, unitCost: line.unitCost, date }));
+    receiptLines.push({ productId: line.productId, qty });
+  });
+
+  if (receiptLines.length) o.receipts.push(normReceipt({ id: uid(), date, note: $('#rc_note').value.trim(), lines: receiptLines }));
+  if (closeShort) o.closed = true;
+
+  save();
+  renderAll();
+  const total = receiptLines.reduce((s, l) => s + l.qty, 0);
+  toast(closeShort && !total ? 'Order closed short.'
+    : `${num(total)} units booked in${closeShort ? ' — rest closed short' : orderOutstanding(o) ? `, ${num(orderOutstanding(o))} still owed` : ', order complete'}.`);
+}
+
+function printOneOrder(id) {
+  const o = db.orders.find((x) => x.id === id);
+  if (!o) return;
+  const body = o.lines.map((l) => {
+    const p = productById(l.productId);
+    return `<tr><td>${esc(p ? p.name : '—')}</td><td>${esc(p ? p.sku : '')}</td>
+      <td class="num">${num(l.qty)}</td><td class="num">${num(l.received)}</td>
+      <td class="num">${esc(money(l.qty * l.unitCost))}</td></tr>`;
+  }).join('');
+  $('#printArea').innerHTML = `
+    <h1>Purchase order — ${esc(db.settings.shopName || 'Stock Manager')}</h1>
+    <p class="po-meta">${esc(o.supplier || 'Supplier')}${o.ref ? ` · ${esc(o.ref)}` : ''} ·
+      ordered ${esc(longDate(o.orderedOn))}${o.expectedOn ? ` · expected ${esc(longDate(o.expectedOn))}` : ''}</p>
+    <table>
+      <thead><tr><th>Product</th><th>Code</th><th class="num">Ordered</th><th class="num">Received</th><th class="num">Value</th></tr></thead>
+      <tbody>${body}</tbody>
+      <tfoot><tr><td colspan="4" class="num"><strong>Total</strong></td><td class="num"><strong>${esc(money(orderValue(o)))}</strong></td></tr></tfoot>
+    </table>
+    ${o.notes ? `<p class="po-meta">${esc(o.notes)}</p>` : ''}`;
+  window.print();
 }
 
 /* Sales ------------------------------------------------------------------- */
@@ -1823,10 +2269,15 @@ async function deleteProduct(id) {
   const p = productById(id || $('#p_id').value);
   if (!p) return;
   const salesCount = db.sales.filter((s) => s.productId === p.id).length;
+  const onOpenOrders = openOrders().filter((o) => o.lines.some((l) => l.productId === p.id)).length;
+  const consequences = [
+    salesCount ? `its ${salesCount} recorded sale(s)` : '',
+    onOpenOrders ? `its lines on ${onOpenOrders} open order(s)` : '',
+  ].filter(Boolean);
   const ok = await confirmAction(
     `Delete “${p.name}”?`,
-    salesCount
-      ? `This also removes its ${salesCount} recorded sale(s). This cannot be undone.`
+    consequences.length
+      ? `This also removes ${consequences.join(' and ')}. This cannot be undone.`
       : 'This cannot be undone.',
     'Delete it',
   );
@@ -1834,6 +2285,9 @@ async function deleteProduct(id) {
   db.products = db.products.filter((x) => x.id !== p.id);
   db.sales = db.sales.filter((s) => s.productId !== p.id);
   db.restocks = db.restocks.filter((r) => r.productId !== p.id);
+  // Leave no phantom stock "on the way" from a product that no longer exists.
+  db.orders.forEach((o) => { o.lines = o.lines.filter((l) => l.productId !== p.id); });
+  db.orders = db.orders.filter((o) => o.lines.length > 0);
   save();
   renderAll();
   toast(`“${p.name}” deleted.`);
@@ -1873,12 +2327,12 @@ const toCsv = (header, rows) => [header, ...rows].map((r) => r.map(csvCell).join
 function exportProductsCsv() {
   const from30 = dateKey(addDays(new Date(), -29));
   const rows = db.products.map((p) => [
-    p.name, p.sku, p.category, p.supplier, p.unit, p.stock, p.reorderPoint, p.reorderQty,
+    p.name, p.sku, p.category, p.supplier, p.unit, p.stock, onOrder(p.id), p.reorderPoint, p.reorderQty,
     p.leadTimeDays, p.cost, p.price, unitsSold(p.id, from30), STATUS_TEXT[status(p)],
-    orderByDate(p) || '', status(p) === 'ok' ? 0 : suggestedOrder(p),
+    orderByDate(p) || '', suggestedOrder(p),
   ]);
   download(`products-${dateKey()}.csv`, toCsv(
-    ['Product', 'Code', 'Category', 'Supplier', 'Unit', 'In stock', 'Alert at', 'Usual order',
+    ['Product', 'Code', 'Category', 'Supplier', 'Unit', 'In stock', 'On order', 'Alert at', 'Usual order',
       'Lead time (days)', 'Cost', 'Price', 'Used last 30 days', 'Status', 'Order by',
       'Order this much'], rows), 'text/csv');
   toast('Products exported.');
@@ -2205,6 +2659,7 @@ function demoData() {
     products,
     sales,
     restocks: [],
+    orders: [],
     settings: { shopName: 'Corner Shop', currency: '$', coverDays: 30 },
   };
 }
@@ -2285,7 +2740,37 @@ function init() {
     if (act === 'restock') openRestockModal(id);
     if (act === 'delete') deleteProduct(id);
     if (act === 'undo-sale') undoSale(id);
+    if (act === 'edit-order') openOrderModal(id);
+    if (act === 'receive-order') openReceiveModal(id);
+    if (act === 'print-order') printOneOrder(id);
   });
+
+  /* Orders */
+  $('#newOrder').addEventListener('click', () => openOrderModal());
+  $('#ordersFromList').addEventListener('click', ordersFromBuyingList);
+  $('#orderFilter').addEventListener('change', renderOrders);
+  $('#orderForm').addEventListener('submit', saveOrder);
+  $('#cancelOrder').addEventListener('click', () => { $('#orderModal').close(); cancelOrder(); });
+  $('#addOrderLine').addEventListener('click', () => {
+    readOrderLines();
+    orderDraft.push({ productId: db.products[0].id, qty: 1, unitCost: db.products[0].cost, received: 0 });
+    renderOrderLines();
+  });
+  $('#orderLines').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-act="drop-line"]');
+    if (!btn) return;
+    readOrderLines();
+    orderDraft.splice(Number(btn.dataset.i), 1);
+    renderOrderLines();
+  });
+  $('#orderLines').addEventListener('input', (e) => {
+    if (!e.target.closest('[data-line]')) return;
+    readOrderLines();
+    const total = orderDraft.reduce((s, l) => s + l.qty * l.unitCost, 0);
+    $('#orderFormTotal').textContent = total > 0 ? money(total) : '—';
+  });
+  $('#receiveForm').addEventListener('submit', saveReceipt);
+  $('#receiveAll').addEventListener('click', receiveAllOutstanding);
 
   /* Spreadsheet mode: cell editing and keyboard navigation */
   $$('#productMode .seg-btn').forEach((b) => b.addEventListener('click', () => showProductMode(b.dataset.mode)));
@@ -2394,7 +2879,9 @@ function init() {
     const ok = await confirmAction('Load the demo shop?',
       'This replaces anything currently saved with example products and two months of sales.', 'Load demo data');
     if (!ok) return;
-    db = demoData();
+    // Normalised, not assigned raw: that way a field added later can never
+    // be missing from the demo and blow up somewhere far from here.
+    db = normalise(demoData());
     save();
     renderAll();
     showView('dashboard');
