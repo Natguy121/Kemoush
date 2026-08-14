@@ -1110,6 +1110,129 @@ const escapeRegex = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const listOf = (items) => `<ul class="msg-list">${items.join('')}</ul>`;
 const li = (key, val) => `<li><span class="msg-marker">•</span><span class="msg-key">${key}</span> ${val}</li>`;
 
+/** Pick a phrasing, never the same one twice running, so it doesn't drone. */
+const lastPick = {};
+function pick(key, options) {
+  if (options.length === 1) return options[0];
+  let i = Math.floor(Math.random() * options.length);
+  if (i === lastPick[key]) i = (i + 1) % options.length;
+  lastPick[key] = i;
+  return options[i];
+}
+
+/* ── Talking, rather than answering ────────────────────────────────────── *
+ * Sometimes the person at the keyboard isn't after a number. This is a
+ * small scripted thing, not a mind, so it keeps to what it can honestly
+ * do: notice, say something kind and varied, and ask something back.      */
+
+const talkState = { comforted: 0, lastTopic: null };
+
+/** Serious distress — never handled with a canned pep-talk. */
+const CRISIS_RE = /\b(kill myself|killing myself|end my life|ending my life|take my life|suicid\w*|want to die|wanna die|don'?t want to (be here|live|wake up)|hurt myself|harm myself|self[- ]harm|cut myself|no reason to live|better off without me)\b/;
+
+/** First-person feeling talk, as opposed to "stock is low". */
+function looksEmotional(l) {
+  const me = /\b(i|i'?m|im|me|my|myself|feeling|feel)\b/.test(l);
+  const domain = /\b(stock|order|product|supplier|sku|plan|demand|deliver|lead time|shortfall|units|inventory)\b/.test(l);
+  return me && !domain;
+}
+
+function crisisReply() {
+  return `<p>I'm really glad you told me, and I don't want to hand you a script and leave it there. What you're describing is more than a small program should be trusted with — but you deserve someone who <em>can</em> help, tonight.</p>
+    <p>Please reach out to a real person now: someone you trust, or a crisis line. You can find one for your country at <strong>findahelpline.com</strong>. If you're in immediate danger, your local emergency number is the right call.</p>
+    <p>You reached out here, which took something. Please point that same instinct at a human who can actually sit with you. I'll still be here for the boring stock questions afterwards.</p>`;
+}
+
+function comfortReply(topic) {
+  const bodies = {
+    lonely: [
+      `<p>That's a heavy thing to be carrying, and saying it plainly counts for something. Being on your own and feeling alone aren't the same thing — the second one is much harder, and it doesn't care how many people are technically nearby.</p>`,
+      `<p>Loneliness has a way of making itself feel permanent and deserved, and it's neither. It's just what the room feels like right now.</p>`,
+      `<p>I'm sorry it's quiet where you are. That kind of quiet gets loud after a while.</p>`,
+    ],
+    sad: [
+      `<p>That sounds genuinely rough. You don't have to justify feeling low, or have a tidy reason ready for it.</p>`,
+      `<p>I'm sorry. Some days sit heavier than others and there isn't always a why that makes sense.</p>`,
+      `<p>That's a hard place to be in. It's allowed to just be hard, without needing fixing this minute.</p>`,
+    ],
+    stressed: [
+      `<p>That sounds like a lot to be holding at once. Stress like that tends to make everything feel equally urgent, which is exhausting and usually not true.</p>`,
+      `<p>Being stretched that thin wears people down. It isn't a sign you're bad at this.</p>`,
+      `<p>That's a heavy load. Tired doesn't mean weak — it usually means you've been carrying it a while.</p>`,
+    ],
+    talk: [
+      `<p>I'm happy to be here. I'm not much of a conversationalist, but I don't get bored and I'm not going anywhere.</p>`,
+      `<p>Then let's talk. Company is company, even the small kind.</p>`,
+      `<p>Glad you came by. Wanting someone around isn't something to apologise for.</p>`,
+    ],
+  };
+
+  const asks = {
+    lonely: ['What does tonight look like for you?', 'Is this a tonight thing, or has it been building for a while?', 'Who\'s someone you\'d message if it were easy to?'],
+    sad: ['Do you know what set it off, or did it just arrive?', 'Has today been the whole of it, or has it been a longer stretch?', 'What would make the next hour a little softer?'],
+    stressed: ['What\'s the biggest thing on the pile right now?', 'Is any of it actually yours to fix, or has it just landed on you?', 'When did you last properly stop?'],
+    talk: ['What\'s on your mind?', 'How\'s your day been, honestly?', 'What have you been up to?'],
+  };
+
+  let out = pick(`body-${topic}`, bodies[topic] || bodies.talk);
+  out += `<p>${pick(`ask-${topic}`, asks[topic] || asks.talk)}</p>`;
+
+  // Said once, early — honest about what this is, without labouring it.
+  if (talkState.comforted === 0) {
+    out += `<p class="msg-soft">Fair warning: I'm a small program someone set up, so I can listen and keep you company, but I can't really understand you the way a person would. If it gets heavy, a real human is worth reaching for.</p>`;
+  }
+  talkState.comforted++;
+  return out;
+}
+
+function chatReply(l) {
+  if (/^(hi|hey|hello|yo|hiya|good (morning|afternoon|evening))\b/.test(l) || /^how are you/.test(l)) {
+    return `<p>${pick('greet', [
+      'Hello. Good to see you.',
+      'Hey there.',
+      'Hi. How\'s things?',
+      'Hello — glad you dropped in.',
+    ])}</p><p>${pick('greet2', [
+      'I can go through the stock with you, or we can just talk.',
+      'Ask me anything about the stock, or tell me how your day\'s going.',
+      'Numbers or conversation, either\'s fine by me.',
+    ])}</p>`;
+  }
+  if (/\b(thank|thanks|cheers|appreciate)\b/.test(l)) {
+    return `<p>${pick('thanks', [
+      'Any time. That\'s what I\'m here for.',
+      'You\'re very welcome.',
+      'Glad it helped.',
+      'Happy to.',
+    ])}</p>`;
+  }
+  if (/\b(good news|great news|i did it|went well|happy|excited|proud|got the job|finished)\b/.test(l)) {
+    return `<p>${pick('glad', [
+      'That\'s genuinely good to hear.',
+      'Well done — that\'s worth sitting with for a minute.',
+      'Ah, that\'s lovely. Good for you.',
+    ])}</p><p>${pick('glad2', ['Tell me about it?', 'How did it come about?', 'What happened?'])}</p>`;
+  }
+  return null;
+}
+
+/** Emotional read of the message, or null if it's really a stock question. */
+function emotionalReply(raw) {
+  const l = raw.toLowerCase();
+  if (CRISIS_RE.test(l)) return crisisReply();
+
+  const social = chatReply(l);
+  if (social) return social;
+
+  if (!looksEmotional(l)) return null;
+
+  if (/\b(lonely|alone|on my own|by myself|isolated|nobody|no one|no-one)\b/.test(l)) return comfortReply('lonely');
+  if (/\b(sad|down|low|unhappy|miserable|depress\w*|crying|cry|upset|hurt|empty|numb|awful|terrible|rough)\b/.test(l)) return comfortReply('sad');
+  if (/\b(stress\w*|overwhelm\w*|exhaust\w*|burn\w*out|tired|knackered|anxious|anxiety|worried|panic\w*|can'?t cope|too much)\b/.test(l)) return comfortReply('stressed');
+  if (/\b(talk|chat|company|lonely|bored|listen|vent|someone to)\b/.test(l)) return comfortReply('talk');
+  return null;
+}
+
 /** Products named in the question — longest name first so "ABC" beats "A". */
 function productsInText(q) {
   const lower = ` ${q.toLowerCase()} `;
@@ -1161,7 +1284,13 @@ function describeProduct(p) {
 
 function answerToBuy() {
   const rows = needsOrder().sort((a, b) => daysUntilOrder(a) - daysUntilOrder(b));
-  if (!rows.length) return '<p>Nothing needs ordering right now — everything is above its alert level and still inside its lead time.</p>';
+  if (!rows.length) {
+    return `<p>${pick('nobuy', [
+      'Nothing needs ordering right now — everything\'s above its alert level and still inside its lead time.',
+      'You\'re clear for the moment. Nothing has hit its alert level or its ordering deadline.',
+      'Nothing on the list today. Everything\'s holding up.',
+    ])}</p>`;
+  }
   const total = rows.reduce((s, p) => s + suggestedOrder(p) * p.cost, 0);
   const items = rows.slice(0, 8).map((p) => {
     const d = daysUntilOrder(p);
@@ -1171,7 +1300,12 @@ function answerToBuy() {
       : `by ${esc(longDate(orderByDate(p)))}`;
     return li(`${esc(p.name)}:`, `order ${num(suggestedOrder(p))}${p.unit ? ` ${esc(p.unit)}` : ''} — ${when}`);
   });
-  return `<p><strong>${num(rows.length)}</strong> product${rows.length === 1 ? '' : 's'} to order${total > 0 ? `, about <strong>${esc(money(total))}</strong> in total` : ''}.</p>`
+  const lead = pick('buylead', [
+    `<strong>${num(rows.length)}</strong> product${rows.length === 1 ? '' : 's'} to order`,
+    `I make it <strong>${num(rows.length)}</strong> to order`,
+    `There ${rows.length === 1 ? 'is' : 'are'} <strong>${num(rows.length)}</strong> waiting on an order`,
+  ]);
+  return `<p>${lead}${total > 0 ? `, around <strong>${esc(money(total))}</strong> all in` : ''}.</p>`
     + listOf(items)
     + (rows.length > 8 ? `<p>…and ${num(rows.length - 8)} more on the To buy page.</p>` : '');
 }
@@ -1231,16 +1365,28 @@ const ASK_SUGGESTIONS = [
   'How is my stock overall?',
 ];
 
+/** Shown under the box, so it's obvious the talking option is really there. */
+const ASK_CHIPS = [...ASK_SUGGESTIONS, 'I just want to talk'];
+
 /** Work out what is being asked, then answer it from the real numbers. */
 function answerQuestion(raw) {
   const q = String(raw).trim();
   if (!q) return '<p>Ask me something about your stock.</p>';
   const l = q.toLowerCase();
+
+  // How someone's doing comes before what the stock's doing.
+  const feeling = emotionalReply(q);
+  if (feeling) return feeling;
+
   const named = productsInText(q);
   const month = monthInText(q);
 
   if (!db.products.length) {
-    return '<p>There are no products loaded yet, so there is nothing for me to look at. Import a spreadsheet from the Products page, or add a product, and ask me again.</p>';
+    return `<p>${pick('nodata', [
+      'There\'s nothing loaded yet, so there\'s nothing for me to look at.',
+      'No products in here yet — I\'d only be guessing.',
+      'The shelves are empty as far as I can see.',
+    ])} Import a spreadsheet from the Products page, or add a product, and ask me again.</p>`;
   }
 
   if (/^(help|what can|who are you|what are you|how do)/.test(l) || l.includes('what can you')) {
@@ -1292,9 +1438,17 @@ function answerQuestion(raw) {
   if (/sell|selling|moving|popular|best|most/.test(l)) return answerMovers();
   if (/stock|have|inventory|hold|level|summary|overall|how many|how much/.test(l)) return answerStockSummary();
 
-  return '<p>I\'m not sure what you\'re after there. I can answer things like:</p>'
+  return `<p>${pick('lost', [
+    'I\'m not sure I followed that one.',
+    'That one\'s past me, I\'m afraid.',
+    'I didn\'t quite catch what you\'re after there.',
+  ])} ${pick('lost2', [
+    'Here\'s the sort of thing I\'m good for:',
+    'I can help with things like:',
+    'Try me on something like:',
+  ])}</p>`
     + listOf(ASK_SUGGESTIONS.map((s) => li('', esc(s))))
-    + '<p>Naming a product works too — I\'ll give you its stock, cover and order date.</p>';
+    + '<p>Naming a product works too — I\'ll give you its stock, cover and order date. And if you\'d rather talk about something other than stock, just say so.</p>';
 }
 
 function pushMessage(who, html) {
@@ -1315,14 +1469,23 @@ function askQuestion(text) {
 }
 
 function renderAskChips() {
-  $('#chatChips').innerHTML = ASK_SUGGESTIONS
+  $('#chatChips').innerHTML = ASK_CHIPS
     .map((s) => `<button type="button" class="chip">${esc(s)}</button>`).join('');
 }
 
 function greetAsk() {
   if ($('#chatLog').children.length) return;
-  pushMessage('app', '<p>Hello — ask me anything about your stock and I\'ll work it out from what\'s loaded here.</p>'
-    + '<p>Try one of the suggestions below, or just name a product.</p>');
+  const hour = new Date().getHours();
+  const timeOfDay = hour < 5 ? 'You\'re up late.' : hour < 12 ? 'Morning.' : hour < 18 ? 'Afternoon.' : 'Evening.';
+  pushMessage('app', `<p>${timeOfDay} ${pick('hello', [
+    'Good to see you.',
+    'Glad you dropped in.',
+    'Here whenever you need me.',
+  ])}</p><p>${pick('hello2', [
+    'Ask me anything about the stock — or if you\'d rather just talk, that\'s fine too.',
+    'I can dig through the numbers with you, or we can simply chat. Either way.',
+    'Stock questions, or company. Both are on offer.',
+  ])}</p>`);
 }
 
 /* Plan --------------------------------------------------------------------- */

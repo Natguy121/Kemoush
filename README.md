@@ -84,12 +84,23 @@ plan loaded on that computer:
 - *When does AB run out?*, or just name any product for its stock, cover and order date
 - *How much will the next order cost?*, *How is my stock overall?*, *Any discontinued?*
 
+It doesn't have to be about stock. Say hello, say you've had a rough day, or say you just
+want to talk, and it will answer like a person would rather than like a form — and it
+varies how it puts things, so it never repeats itself twice in a row. If someone says
+something that sounds like real distress, it stops trying to be clever and points them
+towards a person and a crisis line instead.
+
 **What it is, plainly:** this is not a chatbot with a language model behind it, and it
 isn't connected to the internet. It recognises what's being asked and then reads the same
 figures the rest of the pages use, so anything it tells you can be found on a page. That's
 deliberate — for ordering decisions, a confidently invented date would be worse than no
 answer, so it only reports what's actually in the data and says so when a question is
 outside what it can work out.
+
+The same honesty applies to the company it keeps you: it can listen, respond kindly and
+ask something back, but it doesn't understand you the way a person does, and it says so
+the first time the conversation turns personal. It's a warm thing to have open at a quiet
+hour, not a substitute for someone who can actually sit with you.
 
 ## The demand plan
 

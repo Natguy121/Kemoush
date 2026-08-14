@@ -299,6 +299,7 @@ main { padding: clamp(14px, 3vw, 26px); max-width: 1280px; margin: 0 auto; }
 .msg-list .msg-key { font-weight: 600; }
 .msg-marker { color: var(--text-muted); }
 .msg-bubble .is-late { color: var(--critical); font-weight: 600; }
+.msg-soft { color: var(--text-muted); font-size: 13px; }
 .chat-chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .chip {
   appearance: none; cursor: pointer; font: inherit; font-size: 13px;
