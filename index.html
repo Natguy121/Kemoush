@@ -138,8 +138,9 @@
     <div class="toolbar">
       <div class="toolbar-text">
         <h2 class="view-title">Shopping list for the supplier</h2>
-        <p class="muted">Everything at or below its alert level, with how much to order so it lasts about
-          <strong id="coverDaysLabel">30</strong> days.</p>
+        <p class="muted">Everything at or below its alert level, plus anything that has to be ordered now to
+          arrive in time. Quantities cover the wait for delivery and about
+          <strong id="coverDaysLabel">30</strong> days after that.</p>
       </div>
       <button class="btn" id="printOrder">Print / save as PDF</button>
     </div>
@@ -151,7 +152,8 @@
               <th>Product</th>
               <th>Supplier</th>
               <th class="num">In stock</th>
-              <th class="num">Sells per week</th>
+              <th class="num">Used per week</th>
+              <th>Order by</th>
               <th class="num">Order this much</th>
               <th class="num">Estimated cost</th>
               <th class="col-actions"></th>
@@ -159,11 +161,11 @@
           </thead>
           <tbody></tbody>
           <tfoot>
-            <tr><td colspan="5" class="num strong">Total</td><td class="num strong" id="reorderTotal"></td><td></td></tr>
+            <tr><td colspan="6" class="num strong">Total</td><td class="num strong" id="reorderTotal"></td><td></td></tr>
           </tfoot>
         </table>
       </div>
-      <p class="empty" id="reorderEmpty" hidden>Nothing to buy right now — every product is above its alert level. 🎉</p>
+      <p class="empty" id="reorderEmpty" hidden>Nothing to order right now — everything is above its alert level and still inside its lead time. 🎉</p>
     </div>
   </section>
 
@@ -204,6 +206,9 @@
           <label class="field"><span>Order enough to last (days)</span>
             <input class="input" id="setCoverDays" type="number" min="1" max="365" step="1">
             <small class="hint">Used to work out how much to buy on the “To buy” page.</small></label>
+          <label class="field"><span>Default lead time (days)</span>
+            <input class="input" id="setLeadTime" type="number" min="0" max="365" step="1">
+            <small class="hint">Used for products with no lead time of their own.</small></label>
         </div>
         <div class="card-foot"><button class="btn btn-primary" id="saveSettings">Save settings</button></div>
       </section>
@@ -256,6 +261,9 @@
       <label class="field"><span>Usual order size</span>
         <input class="input" id="p_reorderQty" type="number" min="0" step="1" value="10">
         <small class="hint">Smallest sensible amount to buy at once.</small></label>
+      <label class="field"><span>Lead time (days)</span>
+        <input class="input" id="p_leadTimeDays" type="number" min="0" step="1" value="0">
+        <small class="hint">How long this supplier takes to deliver.</small></label>
       <label class="field"><span>Cost per unit</span>
         <input class="input" id="p_cost" type="number" min="0" step="0.01" value="0"></label>
       <label class="field"><span>Selling price per unit</span>

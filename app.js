@@ -49,7 +49,7 @@ const emptyDb = () => ({
   products: [],
   sales: [],
   restocks: [],
-  settings: { shopName: '', currency: '$', coverDays: 30 },
+  settings: { shopName: '', currency: '$', coverDays: 30, defaultLeadTimeDays: 0 },
 });
 
 let db = emptyDb();
@@ -92,6 +92,7 @@ const normProduct = (p) => ({
   stock: clampNum(p.stock),
   reorderPoint: clampNum(p.reorderPoint),
   reorderQty: clampNum(p.reorderQty),
+  leadTimeDays: clampNum(p.leadTimeDays),
   cost: clampNum(p.cost),
   price: clampNum(p.price),
   createdAt: p.createdAt || dateKey(),
@@ -207,20 +208,47 @@ function status(p) {
 
 const STATUS_TEXT = { out: 'Out of stock', low: 'Running low', ok: 'Well stocked' };
 
+/** Days this supplier takes to deliver — the product's own, or the default. */
+function leadTime(p) {
+  return clampNum(p.leadTimeDays) || clampNum(db.settings.defaultLeadTimeDays);
+}
+
 /**
- * How much to buy: enough to cover the next `coverDays` of selling, plus the
- * alert level as a cushion, minus what's on the shelf — never less than the
- * usual order size, and rounded up to whole packs.
+ * Days left before the order has to be placed. Stock has to outlast the
+ * supplier's lead time, so the deadline is that much earlier than the day
+ * the shelf actually empties. Zero or negative means it is already late.
+ */
+function daysUntilOrder(p) {
+  const cover = daysOfCover(p);
+  if (cover === Infinity) return Infinity;
+  return Math.floor(cover - leadTime(p));
+}
+
+/** The date that order has to go out, or null when nothing is moving. */
+function orderByDate(p) {
+  const d = daysUntilOrder(p);
+  return d === Infinity ? null : dateKey(addDays(new Date(), d));
+}
+
+/**
+ * How much to buy: enough to cover the wait for delivery *and* the next
+ * `coverDays` of use, plus the alert level as a cushion, minus what's in
+ * stock — never less than the usual order size, rounded up to whole packs.
  */
 function suggestedOrder(p) {
   const coverDays = clampNum(db.settings.coverDays, 1) || 30;
-  let qty = Math.ceil(velocity(p) * coverDays + p.reorderPoint - p.stock);
+  let qty = Math.ceil(velocity(p) * (coverDays + leadTime(p)) + p.reorderPoint - p.stock);
   if (qty < p.reorderQty) qty = p.reorderQty;
   if (p.reorderQty > 1) qty = Math.ceil(qty / p.reorderQty) * p.reorderQty;
   return Math.max(1, qty);
 }
 
-const needsOrder = () => db.products.filter((p) => status(p) !== 'ok');
+/**
+ * Anything low or out — plus anything whose ordering deadline has arrived,
+ * which is the case a plain stock level hides: a product can look well
+ * stocked and still be late to reorder if the supplier is slow.
+ */
+const needsOrder = () => db.products.filter((p) => status(p) !== 'ok' || daysUntilOrder(p) <= 0);
 
 /* ── Toast & confirm ───────────────────────────────────────────────────── */
 
@@ -667,16 +695,16 @@ function renderTopSellers() {
 
 function renderAttention() {
   const rows = needsOrder()
-    .sort((a, b) => daysOfCover(a) - daysOfCover(b))
+    .sort((a, b) => daysUntilOrder(a) - daysUntilOrder(b))
     .slice(0, 6);
 
   if (!rows.length) {
-    $('#attentionList').innerHTML = '<p class="empty">Everything is above its alert level. Nothing to buy today. 🎉</p>';
+    $('#attentionList').innerHTML = '<p class="empty">Nothing needs ordering today — everything is above its alert level and inside its lead time. 🎉</p>';
     return;
   }
 
   $('#attentionList').innerHTML = `<div class="table-scroll"><table class="table">
-    <thead><tr><th>Product</th><th class="num">Left</th><th class="num">Lasts about</th><th>Status</th><th class="num">Buy</th></tr></thead>
+    <thead><tr><th>Product</th><th class="num">Left</th><th class="num">Lasts about</th><th>Status</th><th>Order by</th><th class="num">Buy</th></tr></thead>
     <tbody>${rows.map((p) => {
       const st = status(p);
       const cover = daysOfCover(p);
@@ -685,6 +713,7 @@ function renderAttention() {
         <td class="num">${num(p.stock)}</td>
         <td class="num">${cover === Infinity ? '—' : `${num(Math.floor(cover))} days`}</td>
         <td><span class="pill is-${st}">${STATUS_TEXT[st]}</span></td>
+        <td>${orderByCell(p)}</td>
         <td class="num strong">${num(suggestedOrder(p))}</td>
       </tr>`;
     }).join('')}</tbody></table></div>`;
@@ -773,6 +802,7 @@ const GRID_COLS = [
   { key: 'stock', label: 'In stock', type: 'int' },
   { key: 'reorderPoint', label: 'Alert at', type: 'int' },
   { key: 'reorderQty', label: 'Usual order', type: 'int' },
+  { key: 'leadTimeDays', label: 'Lead time (days)', type: 'int' },
   { key: 'cost', label: 'Cost', type: 'money' },
   { key: 'price', label: 'Price', type: 'money' },
 ];
@@ -918,10 +948,26 @@ function showProductMode(mode) {
 
 /* To buy ------------------------------------------------------------------ */
 
+/** When the order has to go out, worded by how urgent it is. */
+function orderByCell(p) {
+  const d = daysUntilOrder(p);
+  if (d === Infinity) {
+    return `<span class="pill">Nothing used yet</span>`;
+  }
+  if (d < 0) {
+    return `<span class="pill is-out">Late by ${num(-d)} day${d === -1 ? '' : 's'}</span>`;
+  }
+  if (d === 0) return `<span class="pill is-out">Order today</span>`;
+  const date = longDate(orderByDate(p));
+  if (d <= 7) return `<span class="pill is-low">${esc(date)}</span><div class="p-meta">in ${num(d)} day${d === 1 ? '' : 's'}</div>`;
+  return `<span>${esc(date)}</span><div class="p-meta">in ${num(d)} days</div>`;
+}
+
 function renderReorder() {
   $('#coverDaysLabel').textContent = num(db.settings.coverDays || 30);
 
-  const rows = needsOrder().sort((a, b) => daysOfCover(a) - daysOfCover(b));
+  // Soonest deadline first — that is the order she has to work through.
+  const rows = needsOrder().sort((a, b) => daysUntilOrder(a) - daysUntilOrder(b));
   const body = $('#reorderTable tbody');
   let total = 0;
 
@@ -935,6 +981,7 @@ function renderReorder() {
       <td>${esc(p.supplier || '—')}</td>
       <td class="num">${num(p.stock)}</td>
       <td class="num">${num(Math.round(velocity(p) * 7 * 10) / 10)}</td>
+      <td>${orderByCell(p)}</td>
       <td class="num strong">${num(qty)}${p.unit ? ` <span class="p-meta">${esc(p.unit)}</span>` : ''}</td>
       <td class="num">${money(cost)}</td>
       <td><div class="cell-actions">
@@ -1001,6 +1048,7 @@ function renderSettings() {
   $('#setShopName').value = db.settings.shopName || '';
   $('#setCurrency').value = db.settings.currency || '$';
   $('#setCoverDays').value = db.settings.coverDays || 30;
+  $('#setLeadTime').value = clampNum(db.settings.defaultLeadTimeDays);
   $('#storageNote').textContent =
     `Saved on this device: ${num(db.products.length)} products, ${num(db.sales.length)} sales, ${num(db.restocks.length)} stock deliveries.`;
 }
@@ -1020,6 +1068,7 @@ function openProductModal(id) {
   $('#p_stock').value = p ? p.stock : 0;
   $('#p_reorderPoint').value = p ? p.reorderPoint : 5;
   $('#p_reorderQty').value = p ? p.reorderQty : 10;
+  $('#p_leadTimeDays').value = p ? p.leadTimeDays : clampNum(db.settings.defaultLeadTimeDays);
   $('#p_cost').value = p ? p.cost : 0;
   $('#p_price').value = p ? p.price : 0;
   $('#deleteProduct').hidden = !p;
@@ -1092,6 +1141,7 @@ function saveProduct(e) {
     stock: clampNum($('#p_stock').value),
     reorderPoint: clampNum($('#p_reorderPoint').value),
     reorderQty: clampNum($('#p_reorderQty').value),
+    leadTimeDays: clampNum($('#p_leadTimeDays').value),
     cost: clampNum($('#p_cost').value),
     price: clampNum($('#p_price').value),
   };
@@ -1217,12 +1267,13 @@ function exportProductsCsv() {
   const from30 = dateKey(addDays(new Date(), -29));
   const rows = db.products.map((p) => [
     p.name, p.sku, p.category, p.supplier, p.unit, p.stock, p.reorderPoint, p.reorderQty,
-    p.cost, p.price, unitsSold(p.id, from30), STATUS_TEXT[status(p)],
-    status(p) === 'ok' ? 0 : suggestedOrder(p),
+    p.leadTimeDays, p.cost, p.price, unitsSold(p.id, from30), STATUS_TEXT[status(p)],
+    orderByDate(p) || '', status(p) === 'ok' ? 0 : suggestedOrder(p),
   ]);
   download(`products-${dateKey()}.csv`, toCsv(
     ['Product', 'Code', 'Category', 'Supplier', 'Unit', 'In stock', 'Alert at', 'Usual order',
-      'Cost', 'Price', 'Sold last 30 days', 'Status', 'Order this much'], rows), 'text/csv');
+      'Lead time (days)', 'Cost', 'Price', 'Used last 30 days', 'Status', 'Order by',
+      'Order this much'], rows), 'text/csv');
   toast('Products exported.');
 }
 
@@ -1253,7 +1304,9 @@ const IMPORT_ALIASES = {
     'balance', 'stockbalance', 'currentqty', 'qtyonhand', 'unitsinstock', 'stockunits', 'stockcount',
     'quantite', 'qte', 'stockactuel'],
   reorderPoint: ['alertat', 'alert', 'reorderpoint', 'reorderlevel', 'min', 'minimum', 'minstock', 'seuil', 'stockmin', 'alerte'],
-  reorderQty: ['usualorder', 'orderqty', 'reorderqty', 'packsize', 'pack', 'casesize', 'orderquantity', 'colisage'],
+  reorderQty: ['usualorder', 'orderqty', 'reorderqty', 'packsize', 'pack', 'casesize', 'orderquantity', 'moq', 'minimumorderquantity', 'colisage'],
+  leadTimeDays: ['leadtime', 'leadtimedays', 'leadtimeindays', 'deliverytime', 'deliverydays', 'supplierleadtime',
+    'replenishmentleadtime', 'transittime', 'delaidelivraison', 'delai'],
   cost: ['cost', 'costprice', 'buyprice', 'buyingprice', 'purchase', 'purchaseprice', 'wholesale', 'prixachat', 'achat'],
   price: ['price', 'sellprice', 'sellingprice', 'saleprice', 'retail', 'retailprice', 'rrp', 'prixvente', 'vente', 'prix'],
 };
@@ -1334,7 +1387,7 @@ function readImportTable(text) {
       sku, name: name.slice(0, 80),
       category: text2('category'), supplier: text2('supplier'), unit: text2('unit'),
       stock: numAt('stock'), reorderPoint: numAt('reorderPoint'), reorderQty: numAt('reorderQty'),
-      cost: numAt('cost'), price: numAt('price'),
+      leadTimeDays: numAt('leadTimeDays'), cost: numAt('cost'), price: numAt('price'),
     });
   });
 
@@ -1452,23 +1505,25 @@ function importBackup(file) {
 }
 
 function printPurchaseOrder() {
-  const rows = needsOrder().sort((a, b) => daysOfCover(a) - daysOfCover(b));
+  const rows = needsOrder().sort((a, b) => daysUntilOrder(a) - daysUntilOrder(b));
   if (!rows.length) { toast('Nothing to order right now.'); return; }
   let total = 0;
   const body = rows.map((p) => {
     const qty = suggestedOrder(p);
     total += qty * p.cost;
+    const by = orderByDate(p);
     return `<tr><td>${esc(p.name)}</td><td>${esc(p.sku || '')}</td><td>${esc(p.supplier || '')}</td>
-      <td class="num">${num(p.stock)}</td><td class="num">${num(qty)}</td><td class="num">${esc(money(qty * p.cost))}</td></tr>`;
+      <td class="num">${num(p.stock)}</td><td>${esc(by ? longDate(by) : '—')}</td>
+      <td class="num">${num(qty)}</td><td class="num">${esc(money(qty * p.cost))}</td></tr>`;
   }).join('');
 
   $('#printArea').innerHTML = `
     <h1>Purchase order — ${esc(db.settings.shopName || 'Stock Manager')}</h1>
     <p class="po-meta">Prepared ${esc(longDate(dateKey()))} · ${num(rows.length)} products · stock to cover about ${num(db.settings.coverDays || 30)} days</p>
     <table>
-      <thead><tr><th>Product</th><th>Code</th><th>Supplier</th><th class="num">In stock</th><th class="num">Order</th><th class="num">Est. cost</th></tr></thead>
+      <thead><tr><th>Product</th><th>Code</th><th>Supplier</th><th class="num">In stock</th><th>Order by</th><th class="num">Order</th><th class="num">Est. cost</th></tr></thead>
       <tbody>${body}</tbody>
-      <tfoot><tr><td colspan="5" class="num"><strong>Total</strong></td><td class="num"><strong>${esc(money(total))}</strong></td></tr></tfoot>
+      <tfoot><tr><td colspan="6" class="num"><strong>Total</strong></td><td class="num"><strong>${esc(money(total))}</strong></td></tr></tfoot>
     </table>`;
   window.print();
 }
@@ -1665,6 +1720,7 @@ function init() {
     db.settings.shopName = $('#setShopName').value.trim();
     db.settings.currency = $('#setCurrency').value.trim() || '$';
     db.settings.coverDays = Math.min(365, Math.max(1, clampNum($('#setCoverDays').value, 1) || 30));
+    db.settings.defaultLeadTimeDays = Math.min(365, clampNum($('#setLeadTime').value));
     save();
     renderAll();
     toast('Settings saved.');

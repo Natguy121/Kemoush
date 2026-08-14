@@ -71,24 +71,47 @@ import, even *Erase everything*. Click it again to keep walking back through the
 few changes. It remembers even if the page is closed and reopened, so a mistake found
 later can still be fixed.
 
-## How "order this much" is worked out
+## Lead time and the "order by" date
 
-For each product the app looks at how many were sold over the last 30 days and turns that
-into a daily selling rate. Then:
+Each product can carry a **lead time** — how many days that supplier takes to deliver.
+Set it per product (in the product form, or the **Lead time** column in Spreadsheet mode),
+or set one default for everything under **Settings → Default lead time**. Importing a
+spreadsheet picks it up automatically from a `Lead time`, `Delivery days` or similar column.
+
+This is what turns a stock list into a supply plan. Stock has to outlast the wait for the
+next delivery, so the day the order must be *placed* is earlier than the day the shelf
+empties:
 
 ```
-order = (daily rate × days of cover) + alert level − what's in stock
+order-by date = today + (days of stock left − lead time)
+```
+
+The **To buy** page shows that date for every product, soonest first, and flags anything
+already overdue as *Late by N days*. This catches the case a plain stock level hides: a
+product can read **well stocked** and still be late to reorder, simply because its supplier
+is slow. Those products appear on the To buy list too, not just the ones below their alert
+level.
+
+## How "order this much" is worked out
+
+For each product the app looks at how many went out over the last 30 days and turns that
+into a daily rate. Then:
+
+```
+order = (daily rate × (days of cover + lead time)) + alert level − what's in stock
 ```
 
 - **Days of cover** is set in Settings (30 days by default) — how long the new order
-  should last.
+  should last once it arrives.
+- **Lead time** is added on top, so the order also covers what gets used while waiting for
+  the delivery.
 - **Alert level** is the per-product "warn me when stock drops to…" figure. It stays in
   the calculation as a safety cushion.
 - The result is never smaller than the product's **usual order size**, and it's rounded up
   to whole packs of that size.
 
-A product shows up on the **To buy** page as soon as its stock is at or below its alert
-level.
+A product shows up on the **To buy** page when its stock is at or below its alert level,
+**or** when its order-by date has arrived.
 
 ## Where the data is kept
 
