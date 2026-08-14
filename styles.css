@@ -278,6 +278,38 @@ main { padding: clamp(14px, 3vw, 26px); max-width: 1280px; margin: 0 auto; }
 }
 .grid-hint { font-size: 12.5px; color: var(--text-muted); flex: 1 1 320px; }
 
+/* ── Ask: the built-in assistant ───────────────────────────────────────── */
+.chat-card { display: flex; flex-direction: column; gap: 14px; max-width: 860px; margin: 0 auto; }
+.chat-log { display: flex; flex-direction: column; gap: 14px; min-height: 240px; max-height: 58vh; overflow-y: auto; }
+.msg { display: flex; }
+.msg-you { justify-content: flex-end; }
+.msg-bubble {
+  max-width: 84%; padding: 11px 14px; border-radius: var(--radius);
+  font-size: 14.5px; line-height: 1.5;
+}
+.msg-you .msg-bubble { background: var(--accent); color: var(--accent-ink); border-bottom-right-radius: 4px; }
+.msg-app .msg-bubble {
+  background: var(--surface-2); border: 1px solid var(--border);
+  color: var(--text-primary); border-bottom-left-radius: 4px;
+}
+.msg-bubble p + p, .msg-list + p { margin-top: 8px; }
+.msg-bubble strong { font-weight: 600; }
+.msg-list { margin: 8px 0 0; padding-left: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.msg-list li { display: flex; gap: 8px; align-items: baseline; font-variant-numeric: tabular-nums; }
+.msg-list .msg-key { font-weight: 600; }
+.msg-marker { color: var(--text-muted); }
+.msg-bubble .is-late { color: var(--critical); font-weight: 600; }
+.chat-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip {
+  appearance: none; cursor: pointer; font: inherit; font-size: 13px;
+  padding: 6px 12px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text-secondary);
+}
+.chip:hover { border-color: var(--axis); color: var(--text-primary); }
+.chat-form { display: flex; gap: 8px; }
+.chat-form .input { flex: 1; }
+.chat-note { font-size: 12.5px; color: var(--text-muted); }
+
 /* ── Demand plan projection ────────────────────────────────────────────── */
 .table-plan { font-variant-numeric: tabular-nums; }
 .table-plan th, .table-plan td { border-right: 1px solid var(--grid); }

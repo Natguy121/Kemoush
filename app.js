@@ -1099,6 +1099,232 @@ function showProductMode(mode) {
 
 /* To buy ------------------------------------------------------------------ */
 
+/* Ask ---------------------------------------------------------------------- *
+ * A question box that answers from the data actually loaded. It is not a
+ * language model: it recognises what is being asked and then reads the same
+ * functions the pages use, so a number it gives can always be found on a
+ * page. That matters here — a made-up reorder date would be worse than no
+ * answer at all.                                                            */
+
+const escapeRegex = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const listOf = (items) => `<ul class="msg-list">${items.join('')}</ul>`;
+const li = (key, val) => `<li><span class="msg-marker">•</span><span class="msg-key">${key}</span> ${val}</li>`;
+
+/** Products named in the question — longest name first so "ABC" beats "A". */
+function productsInText(q) {
+  const lower = ` ${q.toLowerCase()} `;
+  const hit = (needle) => needle && new RegExp(`(^|[^a-z0-9])${escapeRegex(needle.toLowerCase())}([^a-z0-9]|$)`).test(lower);
+  return db.products
+    .filter((p) => hit(p.name) || hit(p.sku))
+    .sort((a, b) => b.name.length - a.name.length);
+}
+
+/** A month named in the question: "November", "Nov 26", "2026-11". */
+function monthInText(q) {
+  const direct = q.match(/\b(\d{4}-\d{1,2}|[A-Za-z]{3,9}[\s\-/.]*\d{2,4}|\d{1,2}\/\d{4})\b/);
+  if (direct) {
+    const key = parseMonthHeader(direct[1]);
+    if (key) return key;
+  }
+  const bare = q.toLowerCase().match(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b/);
+  if (!bare) return null;
+  // A bare month name means the next time it comes round.
+  const idx = MONTH_ABBR.indexOf(bare[1]);
+  const now = new Date();
+  const year = idx < now.getMonth() ? now.getFullYear() + 1 : now.getFullYear();
+  return `${year}-${pad2(idx + 1)}`;
+}
+
+function describeProduct(p) {
+  const cover = daysOfCover(p);
+  const by = orderByDate(p);
+  const d = daysUntilOrder(p);
+  const bits = [
+    li('In stock:', `${num(p.stock)}${p.unit ? ` ${esc(p.unit)}` : ''}`),
+    li('Status:', STATUS_TEXT[status(p)].toLowerCase()),
+    li('Lasts:', cover === Infinity ? 'nothing planned or selling, so it is not running down' : `about ${num(Math.floor(cover))} days`),
+  ];
+  if (leadTime(p)) bits.push(li('Lead time:', `${num(leadTime(p))} days`));
+  if (by) {
+    bits.push(li('Order by:', d < 0
+      ? `<span class="is-late">${esc(longDate(by))} — ${num(-d)} days late</span>`
+      : esc(longDate(by))));
+  }
+  if (!p.discontinued && (status(p) !== 'ok' || d <= 0)) bits.push(li('Order:', `${num(suggestedOrder(p))} to cover it`));
+  if (hasPlan(p)) {
+    const { short } = projectPlan(p, 24);
+    bits.push(li('Against the plan:', short ? `<span class="is-late">runs short in ${esc(monthLabel(short))}</span>` : 'covered for the next 24 months'));
+  }
+  if (p.discontinued) bits.push(li('Note:', 'discontinued — no orders are suggested for it'));
+  return `<p><strong>${esc(p.name)}</strong>${p.sku ? ` (${esc(p.sku)})` : ''}</p>${listOf(bits)}`;
+}
+
+function answerToBuy() {
+  const rows = needsOrder().sort((a, b) => daysUntilOrder(a) - daysUntilOrder(b));
+  if (!rows.length) return '<p>Nothing needs ordering right now — everything is above its alert level and still inside its lead time.</p>';
+  const total = rows.reduce((s, p) => s + suggestedOrder(p) * p.cost, 0);
+  const items = rows.slice(0, 8).map((p) => {
+    const d = daysUntilOrder(p);
+    const when = d === Infinity ? 'no date yet'
+      : d < 0 ? `<span class="is-late">${num(-d)} days late</span>`
+      : d === 0 ? '<span class="is-late">today</span>'
+      : `by ${esc(longDate(orderByDate(p)))}`;
+    return li(`${esc(p.name)}:`, `order ${num(suggestedOrder(p))}${p.unit ? ` ${esc(p.unit)}` : ''} — ${when}`);
+  });
+  return `<p><strong>${num(rows.length)}</strong> product${rows.length === 1 ? '' : 's'} to order${total > 0 ? `, about <strong>${esc(money(total))}</strong> in total` : ''}.</p>`
+    + listOf(items)
+    + (rows.length > 8 ? `<p>…and ${num(rows.length - 8)} more on the To buy page.</p>` : '');
+}
+
+function answerShortfalls(month) {
+  const planned = db.products.filter(hasPlan);
+  if (!planned.length) return '<p>No demand plan is loaded yet, so I can\'t project shortfalls. Import a spreadsheet with a column per month and this will fill in.</p>';
+
+  if (month) {
+    const hits = planned.map((p) => {
+      const { row } = projectPlan(p, 24);
+      const cell = row.find((c) => c.key === month);
+      return cell ? { p, closing: cell.closing } : null;
+    }).filter((x) => x && x.closing < 0);
+    if (!hits.length) return `<p>Nothing is projected to be short in <strong>${esc(monthLabel(month))}</strong>.</p>`;
+    return `<p><strong>${num(hits.length)}</strong> short in <strong>${esc(monthLabel(month))}</strong>:</p>`
+      + listOf(hits.map(({ p, closing }) => li(`${esc(p.name)}:`, `<span class="is-late">${num(closing)}</span> — short by ${num(-closing)}`)));
+  }
+
+  const shorts = planned.map((p) => ({ p, short: projectPlan(p, 24).short })).filter((x) => x.short);
+  if (!shorts.length) return '<p>Nothing runs short in the next 24 months on the current plan. 🎉</p>';
+  shorts.sort((a, b) => (a.short < b.short ? -1 : 1));
+  return `<p><strong>${num(shorts.length)}</strong> product${shorts.length === 1 ? '' : 's'} run short on the plan:</p>`
+    + listOf(shorts.map(({ p, short }) => li(`${esc(p.name)}:`, `<span class="is-late">${esc(monthLabel(short))}</span>`)));
+}
+
+function answerMovers() {
+  const from30 = dateKey(addDays(new Date(), -29));
+  const rows = db.products
+    .map((p) => ({ p, sold: unitsSold(p.id, from30) }))
+    .filter((r) => r.sold > 0)
+    .sort((a, b) => b.sold - a.sold)
+    .slice(0, 5);
+  if (!rows.length) return '<p>No sales recorded in the last 30 days, so there is nothing to rank yet.</p>';
+  return '<p>Most movement in the last 30 days:</p>'
+    + listOf(rows.map(({ p, sold }) => li(`${esc(p.name)}:`, `${num(sold)} units`)));
+}
+
+function answerStockSummary() {
+  const total = db.products.reduce((s, p) => s + p.stock, 0);
+  const value = db.products.reduce((s, p) => s + p.stock * p.cost, 0);
+  const out = db.products.filter((p) => status(p) === 'out').length;
+  const low = db.products.filter((p) => status(p) === 'low').length;
+  return `<p>You have <strong>${num(total)}</strong> units across <strong>${num(db.products.length)}</strong> products`
+    + `${value > 0 ? `, worth about <strong>${esc(money(value))}</strong> at cost` : ''}.</p>`
+    + listOf([
+      li('Out of stock:', num(out)),
+      li('Running low:', num(low)),
+      li('Discontinued:', num(db.products.filter((p) => p.discontinued).length)),
+    ]);
+}
+
+const ASK_SUGGESTIONS = [
+  'What do I need to order?',
+  'What runs short, and when?',
+  'How much will the next order cost?',
+  'How is my stock overall?',
+];
+
+/** Work out what is being asked, then answer it from the real numbers. */
+function answerQuestion(raw) {
+  const q = String(raw).trim();
+  if (!q) return '<p>Ask me something about your stock.</p>';
+  const l = q.toLowerCase();
+  const named = productsInText(q);
+  const month = monthInText(q);
+
+  if (!db.products.length) {
+    return '<p>There are no products loaded yet, so there is nothing for me to look at. Import a spreadsheet from the Products page, or add a product, and ask me again.</p>';
+  }
+
+  if (/^(help|what can|who are you|what are you|how do)/.test(l) || l.includes('what can you')) {
+    return '<p>I read the products and demand plan on this computer and answer from them. Things I can tell you:</p>'
+      + listOf([
+        li('Ordering:', 'what needs ordering, by when, and roughly what it costs'),
+        li('Shortfalls:', 'what runs short against the plan, and in which month'),
+        li('A product:', 'stock, cover, lead time and order date — just name it'),
+        li('Overall:', 'total stock, what is out or low, what is discontinued'),
+      ])
+      + '<p>I only report what is in your data — I don\'t guess numbers.</p>';
+  }
+
+  // A named product answers most things about itself.
+  if (named.length && !/\ball\b|everything|overall/.test(l)) {
+    if (/short|run out|runs out|last|cover|when/.test(l) && hasPlan(named[0])) {
+      const { short } = projectPlan(named[0], 24);
+      const p = named[0];
+      return short
+        ? `<p><strong>${esc(p.name)}</strong> runs short in <strong class="is-late">${esc(monthLabel(short))}</strong> on the current plan, from ${num(p.stock)} in stock today.</p>`
+        : `<p><strong>${esc(p.name)}</strong> stays covered for the next 24 months on the current plan.</p>`;
+    }
+    return named.slice(0, 3).map(describeProduct).join('');
+  }
+
+  if (/cost|spend|budget|money|price|worth|value/.test(l)) {
+    const rows = needsOrder();
+    const total = rows.reduce((s, p) => s + suggestedOrder(p) * p.cost, 0);
+    const stockValue = db.products.reduce((s, p) => s + p.stock * p.cost, 0);
+    return `<p>The orders due now come to about <strong>${esc(money(total))}</strong> across ${num(rows.length)} product${rows.length === 1 ? '' : 's'}.</p>`
+      + `<p>What you are already holding is worth about <strong>${esc(money(stockValue))}</strong> at cost.</p>`;
+  }
+
+  if (/short|shortfall|run out|runs out|negative|gap/.test(l) || (month && /plan/.test(l))) return answerShortfalls(month);
+  if (month) return answerShortfalls(month);
+  if (/order|buy|purchase|reorder|replenish|urgent|late|overdue|today|this week/.test(l)) return answerToBuy();
+  if (/discontinued|inactive|obsolete/.test(l)) {
+    const rows = db.products.filter((p) => p.discontinued);
+    return rows.length
+      ? `<p><strong>${num(rows.length)}</strong> discontinued:</p>` + listOf(rows.map((p) => li(`${esc(p.name)}:`, `${num(p.stock)} left`)))
+      : '<p>Nothing is marked discontinued.</p>';
+  }
+  if (/lead time|delivery|supplier take|how long.*deliver/.test(l)) {
+    const rows = db.products.filter((p) => leadTime(p) > 0).sort((a, b) => leadTime(b) - leadTime(a)).slice(0, 8);
+    return rows.length
+      ? '<p>Lead times, longest first:</p>' + listOf(rows.map((p) => li(`${esc(p.name)}:`, `${num(leadTime(p))} days`)))
+      : '<p>No lead times are set yet. Add one per product, or a default under Settings, and I can tell you when each order has to go out.</p>';
+  }
+  if (/sell|selling|moving|popular|best|most/.test(l)) return answerMovers();
+  if (/stock|have|inventory|hold|level|summary|overall|how many|how much/.test(l)) return answerStockSummary();
+
+  return '<p>I\'m not sure what you\'re after there. I can answer things like:</p>'
+    + listOf(ASK_SUGGESTIONS.map((s) => li('', esc(s))))
+    + '<p>Naming a product works too — I\'ll give you its stock, cover and order date.</p>';
+}
+
+function pushMessage(who, html) {
+  const log = $('#chatLog');
+  const wrap = document.createElement('div');
+  wrap.className = `msg msg-${who}`;
+  wrap.innerHTML = `<div class="msg-bubble">${html}</div>`;
+  log.appendChild(wrap);
+  log.scrollTop = log.scrollHeight;
+}
+
+function askQuestion(text) {
+  const q = String(text).trim();
+  if (!q) return;
+  pushMessage('you', esc(q));
+  pushMessage('app', answerQuestion(q));
+  $('#chatInput').value = '';
+}
+
+function renderAskChips() {
+  $('#chatChips').innerHTML = ASK_SUGGESTIONS
+    .map((s) => `<button type="button" class="chip">${esc(s)}</button>`).join('');
+}
+
+function greetAsk() {
+  if ($('#chatLog').children.length) return;
+  pushMessage('app', '<p>Hello — ask me anything about your stock and I\'ll work it out from what\'s loaded here.</p>'
+    + '<p>Try one of the suggestions below, or just name a product.</p>');
+}
+
 /* Plan --------------------------------------------------------------------- */
 
 function renderPlan() {
@@ -1828,6 +2054,7 @@ function showView(name) {
   $$('.tab').forEach((t) => t.classList.toggle('is-active', t.dataset.view === name));
   // Charts measure their container, so they must be drawn while the view is visible.
   if (name === 'dashboard') { renderSalesChart(); renderTopSellers(); }
+  if (name === 'ask') { greetAsk(); $('#chatInput').focus(); }
   window.scrollTo({ top: 0 });
 }
 
@@ -1952,6 +2179,14 @@ function init() {
     ui.productSort = { key, dir: ui.productSort.key === key ? -ui.productSort.dir : 1 };
     renderProducts();
   }));
+  /* Ask */
+  renderAskChips();
+  $('#chatForm').addEventListener('submit', (e) => { e.preventDefault(); askQuestion($('#chatInput').value); });
+  $('#chatChips').addEventListener('click', (e) => {
+    const chip = e.target.closest('.chip');
+    if (chip) askQuestion(chip.textContent);
+  });
+
   $$('#planRange .seg-btn').forEach((b) => b.addEventListener('click', () => {
     $$('#planRange .seg-btn').forEach((x) => x.classList.toggle('is-active', x === b));
     ui.planMonths = Number(b.dataset.months);

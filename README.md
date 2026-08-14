@@ -22,6 +22,7 @@ your own products.
 | Page | What it answers |
 |---|---|
 | **Overview** | How much stock do I have, what needs attention, how much is moving |
+| **Ask** | Type a question in plain English and get the answer from your own data |
 | **Plan** | Stock run down against the monthly demand plan — where the shortfalls land |
 | **Products** | The full list — stock level, how fast each one sells, how long it will last |
 | **To buy** | The shopping list for suppliers: what to order, how much, and roughly what it costs |
@@ -71,6 +72,24 @@ something to undo, and reverses whatever was just done — an edit, a deleted pr
 import, even *Erase everything*. Click it again to keep walking back through the last
 few changes. It remembers even if the page is closed and reopened, so a mistake found
 later can still be fixed.
+
+## Asking it questions
+
+The **Ask** page takes a question in plain English and answers it from the products and
+plan loaded on that computer:
+
+- *What do I need to order?* — the list, with dates and a rough total
+- *What runs short, and when?* — every product heading for a shortfall
+- *What is short in November?* — a single month
+- *When does AB run out?*, or just name any product for its stock, cover and order date
+- *How much will the next order cost?*, *How is my stock overall?*, *Any discontinued?*
+
+**What it is, plainly:** this is not a chatbot with a language model behind it, and it
+isn't connected to the internet. It recognises what's being asked and then reads the same
+figures the rest of the pages use, so anything it tells you can be found on a page. That's
+deliberate — for ordering decisions, a confidently invented date would be worse than no
+answer, so it only reports what's actually in the data and says so when a question is
+outside what it can work out.
 
 ## The demand plan
 

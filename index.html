@@ -27,6 +27,7 @@
 
 <nav class="tabs" role="tablist">
   <button class="tab is-active" role="tab" data-view="dashboard">Overview</button>
+  <button class="tab" role="tab" data-view="ask">Ask</button>
   <button class="tab" role="tab" data-view="products">Products</button>
   <button class="tab" role="tab" data-view="plan">Plan <span class="tab-badge" id="planBadge" hidden>0</span></button>
   <button class="tab" role="tab" data-view="reorder">To&nbsp;buy <span class="tab-badge" id="reorderBadge" hidden>0</span></button>
@@ -75,6 +76,21 @@
       </div>
       <div id="forecastBody"></div>
     </section>
+  </section>
+
+  <!-- ───────────────────────── Ask ───────────────────────── -->
+  <section class="view" id="view-ask">
+    <div class="card chat-card">
+      <div class="chat-log" id="chatLog" role="log" aria-live="polite"></div>
+      <div class="chat-chips" id="chatChips"></div>
+      <form class="chat-form" id="chatForm">
+        <input class="input" id="chatInput" autocomplete="off"
+          placeholder="Ask about stock, shortfalls, what to order…" aria-label="Ask a question about your stock">
+        <button class="btn btn-primary" type="submit">Ask</button>
+      </form>
+      <p class="chat-note">Answers are worked out from your own data on this computer — nothing is
+        sent anywhere, and every number comes straight from the products and plan you loaded.</p>
+    </div>
   </section>
 
   <!-- ───────────────────────── Products ───────────────────────── -->
