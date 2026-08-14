@@ -102,17 +102,77 @@ const emptyDb = () => ({
 
 let db = emptyDb();
 
-function load() {
+/* ── Where the data lives ──────────────────────────────────────────────── *
+ * localStorage caps out around 5MB, which a catalogue of a few thousand
+ * products with demand plans blows straight through — and it fails by
+ * throwing, so the save is simply lost. IndexedDB has room for orders of
+ * magnitude more, so it is the primary store, with localStorage kept as a
+ * fallback for tiny datasets and any browser that refuses IndexedDB.        */
+
+const IDB_NAME = 'stockManager';
+const IDB_STORE = 'state';
+
+function idbOpen() {
+  return new Promise((resolve, reject) => {
+    if (!window.indexedDB) { reject(new Error('no indexedDB')); return; }
+    const req = indexedDB.open(IDB_NAME, 1);
+    req.onupgradeneeded = () => { req.result.createObjectStore(IDB_STORE); };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+function idbRequest(mode, fn) {
+  return idbOpen().then((idb) => new Promise((resolve, reject) => {
+    const tx = idb.transaction(IDB_STORE, mode);
+    const req = fn(tx.objectStore(IDB_STORE));
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  }));
+}
+
+const idbGet = (key) => idbRequest('readonly', (store) => store.get(key));
+const idbSet = (key, value) => idbRequest('readwrite', (store) => store.put(value, key));
+
+let usingIdb = false;
+
+async function load() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
+    let parsed = null;
+
+    try {
+      // Written as a string, but accept an object too so anything stored by
+      // an older build still loads.
+      const fromIdb = await idbGet(STORAGE_KEY);
+      if (fromIdb) {
+        parsed = typeof fromIdb === 'string' ? JSON.parse(fromIdb) : fromIdb;
+        usingIdb = true;
+      }
+    } catch (err) {
+      console.warn('IndexedDB unavailable, falling back to localStorage:', err);
+    }
+
+    if (!parsed) {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) parsed = JSON.parse(raw);
+    }
+
+    if (!parsed) {
       // A packaged copy can define window.STARTER_DATA (see build-archive.js)
       // to open pre-loaded instead of blank — untouched, this is a no-op.
       if (window.STARTER_DATA) { db = normalise(window.STARTER_DATA); save(); }
       return;
     }
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === 'object') db = normalise(parsed);
+    if (typeof parsed === 'object') db = normalise(parsed);
+    lastSavedJson = JSON.stringify(db);
+
+    // The stack may have spilled to IndexedDB even when the data itself did not.
+    if (!undoStack.length) {
+      try {
+        const stack = await idbGet(UNDO_KEY);
+        if (Array.isArray(stack) && stack.length) { undoStack = stack; undoInIdb = true; }
+      } catch { /* undo history is a nicety, not worth failing the load over */ }
+    }
   } catch (err) {
     console.warn('Could not read saved data:', err);
     toast('Saved data could not be read — starting empty.');
@@ -221,8 +281,33 @@ let undoStack = [];
 try { undoStack = JSON.parse(localStorage.getItem(UNDO_KEY) || '[]'); } catch { undoStack = []; }
 if (!Array.isArray(undoStack)) undoStack = [];
 
+/** Undo snapshots are whole copies of the data, so a big catalogue gets
+ *  fewer of them — ten copies of a 6MB database helps nobody. */
+const UNDO_BUDGET_BYTES = 12 * 1024 * 1024;
+
+function trimUndoStack() {
+  while (undoStack.length > UNDO_LIMIT) undoStack.shift();
+  let total = undoStack.reduce((s, x) => s + x.length, 0);
+  while (undoStack.length > 1 && total > UNDO_BUDGET_BYTES) {
+    total -= undoStack.shift().length;
+  }
+}
+
+let undoInIdb = false;
+
 function persistUndoStack() {
-  try { localStorage.setItem(UNDO_KEY, JSON.stringify(undoStack)); } catch { /* best effort */ }
+  // The stack holds whole copies of the data, so it can outgrow localStorage
+  // even when the data itself still fits. Fall back rather than lose it.
+  if (!usingIdb && !undoInIdb) {
+    try {
+      localStorage.setItem(UNDO_KEY, JSON.stringify(undoStack));
+      return;
+    } catch {
+      undoInIdb = true;
+      try { localStorage.removeItem(UNDO_KEY); } catch { /* fine */ }
+    }
+  }
+  idbSet(UNDO_KEY, undoStack).catch(() => { /* undo history is a nicety */ });
 }
 
 function updateUndoButton() {
@@ -230,20 +315,43 @@ function updateUndoButton() {
   if (btn) btn.hidden = undoStack.length === 0;
 }
 
+let lastSavedJson = null;
+
 function save() {
-  try {
-    const prev = localStorage.getItem(STORAGE_KEY);
-    if (prev !== null) {
-      undoStack.push(prev);
-      if (undoStack.length > UNDO_LIMIT) undoStack.shift();
-      persistUndoStack();
-    }
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
-    updateUndoButton();
-  } catch (err) {
-    console.error(err);
-    toast('Could not save — the browser storage may be full.');
+  invalidateDerived();
+  const json = JSON.stringify(db);
+  const prev = lastSavedJson;
+
+  if (prev !== null && prev !== json) {
+    undoStack.push(prev);
+    trimUndoStack();
+    persistUndoStack();
   }
+  lastSavedJson = json;
+  updateUndoButton();
+  writeState(json);
+}
+
+/** Write the state out, moving to IndexedDB the moment localStorage balks. */
+function writeState(json) {
+  if (!usingIdb) {
+    try {
+      localStorage.setItem(STORAGE_KEY, json);
+      return;
+    } catch (err) {
+      // Almost certainly the quota. Switch stores rather than lose the data.
+      console.warn('localStorage full, moving to IndexedDB:', err);
+      usingIdb = true;
+    }
+  }
+  // Stored as the already-serialised string: parsing 6MB back into an object
+  // just to hand it to IndexedDB is pure waste on every keystroke.
+  idbSet(STORAGE_KEY, json)
+    .then(() => { try { localStorage.removeItem(STORAGE_KEY); } catch { /* fine */ } })
+    .catch((err) => {
+      console.error(err);
+      toast('Could not save — this browser is out of storage room.');
+    });
 }
 
 function undoLast() {
@@ -259,7 +367,8 @@ function undoLast() {
   }
   // Written directly (not via save()) so undoing doesn't push a new step
   // onto its own stack — repeated clicks keep walking further back.
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(db)); } catch { /* best effort */ }
+  lastSavedJson = prevRaw;
+  writeState(prevRaw);
   updateUndoButton();
   renderAll();
   toast('Last change undone.');
@@ -267,7 +376,50 @@ function undoLast() {
 
 /* ── Derived numbers ───────────────────────────────────────────────────── */
 
-const productById = (id) => db.products.find((p) => p.id === id);
+/* ── Derived-data index ────────────────────────────────────────────────── *
+ * Without this, the hot numbers (units sold recently, quantity on order)
+ * each scan every sale or order for every product — fine for a corner shop,
+ * hopeless at ten thousand lines. Built once per change, then read in O(1). */
+
+let derived = null;
+const invalidateDerived = () => { derived = null; };
+
+function idx() {
+  if (derived) return derived;
+  const from30 = dateKey(addDays(new Date(), -29));
+  const prevFrom = dateKey(addDays(new Date(), -59));
+  const prevTo = dateKey(addDays(new Date(), -30));
+  const sold30 = new Map();
+  const soldPrev30 = new Map();
+  const byId = new Map();
+  const onOrderQty = new Map();
+  const incoming = new Map();
+  const nowMonth = monthKey();
+
+  db.products.forEach((p) => byId.set(p.id, p));
+  db.sales.forEach((s) => {
+    if (s.date >= from30) sold30.set(s.productId, (sold30.get(s.productId) || 0) + s.qty);
+    else if (s.date >= prevFrom && s.date <= prevTo) soldPrev30.set(s.productId, (soldPrev30.get(s.productId) || 0) + s.qty);
+  });
+  db.orders.forEach((o) => {
+    if (o.cancelled || o.closed) return;
+    let key = o.expectedOn ? o.expectedOn.slice(0, 7) : nowMonth;
+    if (key < nowMonth) key = nowMonth;
+    o.lines.forEach((l) => {
+      const out = Math.max(0, l.qty - l.received);
+      if (!out) return;
+      onOrderQty.set(l.productId, (onOrderQty.get(l.productId) || 0) + out);
+      if (!incoming.has(l.productId)) incoming.set(l.productId, {});
+      const m = incoming.get(l.productId);
+      m[key] = (m[key] || 0) + out;
+    });
+  });
+
+  derived = { sold30, soldPrev30, byId, onOrderQty, incoming };
+  return derived;
+}
+
+const productById = (id) => idx().byId.get(id);
 
 /** Sales rows on or after `fromKey` (and before `toKey` when given). */
 function salesInRange(fromKey, toKey) {
@@ -280,11 +432,13 @@ function unitsSold(productId, fromKey, toKey) {
   ), 0);
 }
 
+/** Units sold in the last 30 days — read straight from the index. */
+const soldLast30 = (productId) => idx().sold30.get(productId) || 0;
+
 /** Average units actually sold per day, over the last 30 days the product existed. */
 function salesRate(p) {
   const window = 30;
-  const from = dateKey(addDays(new Date(), -(window - 1)));
-  const sold = unitsSold(p.id, from);
+  const sold = soldLast30(p.id);
   const age = Math.max(1, daysBetween(p.createdAt, dateKey()) + 1);
   return sold / Math.min(window, age);
 }
@@ -421,30 +575,13 @@ const ORDER_STATUS_TEXT = {
 const orderIsLate = (o) => orderIsOpen(o) && o.expectedOn && o.expectedOn < dateKey();
 
 /** Units of a product already on order and still to come. */
-function onOrder(productId) {
-  return openOrders().reduce((s, o) => s + o.lines
-    .filter((l) => l.productId === productId)
-    .reduce((t, l) => t + lineOutstanding(l), 0), 0);
-}
+const onOrder = (productId) => idx().onOrderQty.get(productId) || 0;
 
 /**
  * When outstanding stock is due, keyed by month. Anything already overdue
  * is counted against the current month — it is still coming, just late.
  */
-function incomingByMonth(productId) {
-  const now = monthKey();
-  const map = {};
-  openOrders().forEach((o) => {
-    const qty = o.lines
-      .filter((l) => l.productId === productId)
-      .reduce((t, l) => t + lineOutstanding(l), 0);
-    if (!qty) return;
-    let key = o.expectedOn ? o.expectedOn.slice(0, 7) : now;
-    if (key < now) key = now;
-    map[key] = (map[key] || 0) + qty;
-  });
-  return map;
-}
+const incomingByMonth = (productId) => idx().incoming.get(productId) || {};
 
 /** Days this supplier takes to deliver — the product's own, or the default. */
 function leadTime(p) {
@@ -493,11 +630,20 @@ function suggestedOrder(p) {
  * stocked and still be late to reorder if the supplier is slow. Products
  * already covered by an open order drop off the list.
  */
-const needsOrder = () => db.products.filter((p) => (
-  !p.discontinued
-  && (status(p) !== 'ok' || daysUntilOrder(p) <= 0)
-  && suggestedOrder(p) > 0
-));
+function needsOrder() {
+  const cache = idx();
+  // Several panels ask for this in a single render, and at ten thousand
+  // products it is the most expensive question in the app — so answer it
+  // once per change and hand back the same list.
+  if (!cache.needsOrder) {
+    cache.needsOrder = db.products.filter((p) => (
+      !p.discontinued
+      && (status(p) !== 'ok' || daysUntilOrder(p) <= 0)
+      && suggestedOrder(p) > 0
+    ));
+  }
+  return cache.needsOrder;
+}
 
 /* ── Toast & confirm ───────────────────────────────────────────────────── */
 
@@ -690,9 +836,19 @@ const ui = {
   productMode: 'list',
   planMonths: 12,
   historyMonths: 24,
+  // Big catalogues are held back rather than poured into the DOM all at once:
+  // ten thousand rows is roughly a million nodes, which no browser enjoys.
+  productLimit: 200,
+  planLimit: 100,
+  reorderLimit: 200,
 };
 
+const PAGE_STEP = 200;
+
 function renderAll() {
+  // Anything that reassigns db (undo, restore, demo) lands here, so rebuild
+  // the index from scratch rather than trusting whoever changed the data.
+  invalidateDerived();
   $('#shopName').textContent = db.settings.shopName || 'Stock Manager';
   document.title = db.settings.shopName ? `${db.settings.shopName} — Stock` : 'Stock Manager';
   renderReorderBadge();
@@ -819,11 +975,14 @@ function forecastNextMonth() {
     ? (recent.units === 0 ? 0 : null)
     : ((recent.units - previous.units) / previous.units) * 100;
 
+  // Both windows come from the index — asking per product would mean a full
+  // scan of every sale ten thousand times over.
+  const { sold30, soldPrev30 } = idx();
   const movers = db.products
     .filter((p) => daysBetween(p.createdAt, dateKey(now)) + 1 >= 60)
     .map((p) => {
-      const r = unitsSold(p.id, recentFrom, recentTo);
-      const prev = unitsSold(p.id, prevFrom, prevTo);
+      const r = sold30.get(p.id) || 0;
+      const prev = soldPrev30.get(p.id) || 0;
       const pct = prev === 0 ? null : ((r - prev) / prev) * 100;
       return { p, recent: r, previous: prev, pct };
     })
@@ -979,8 +1138,7 @@ function visibleProducts() {
   const cat = $('#categoryFilter').value;
   const st = $('#statusFilter').value;
 
-  const from30 = dateKey(addDays(new Date(), -29));
-  let rows = db.products.map((p) => ({ p, sold30: unitsSold(p.id, from30), st: status(p) }));
+  let rows = db.products.map((p) => ({ p, sold30: soldLast30(p.id), st: status(p) }));
 
   if (q) rows = rows.filter(({ p }) => [p.name, p.sku, p.category, p.supplier].join(' ').toLowerCase().includes(q));
   if (cat) rows = rows.filter(({ p }) => p.category === cat);
@@ -1004,7 +1162,8 @@ function renderProducts() {
   filter.value = cats.includes(keep) ? keep : '';
   $('#categoryList').innerHTML = cats.map((c) => `<option value="${esc(c)}"></option>`).join('');
 
-  const rows = visibleProducts();
+  const allRows = visibleProducts();
+  const rows = allRows.slice(0, ui.productLimit);
   const body = $('#productTable tbody');
   body.innerHTML = rows.map(({ p, sold30, st }) => {
     const cover = daysOfCover(p);
@@ -1029,12 +1188,20 @@ function renderProducts() {
     </tr>`;
   }).join('');
 
-  $('#productsEmpty').hidden = rows.length > 0;
+  $('#productsEmpty').hidden = allRows.length > 0;
   $('#productsEmpty').textContent = db.products.length === 0
     ? 'No products yet. Use “+ New product” to add the first one, or load the demo data from Settings.'
     : 'No products match this search.';
 
-  renderProductGrid(rows);
+  const hiddenCount = allRows.length - rows.length;
+  const more = $('#productsMore');
+  more.hidden = hiddenCount <= 0;
+  more.textContent = `Show more (${num(hiddenCount)} of ${num(allRows.length)} not shown)`;
+  const gridMore = $('#gridMore');
+  gridMore.hidden = hiddenCount <= 0;
+  gridMore.textContent = more.textContent;
+
+  renderProductGrid(rows, allRows.length);
 
   $$('#productTable .sortable').forEach((th) => {
     th.classList.toggle('sort-asc', th.dataset.sort === ui.productSort.key && ui.productSort.dir === 1);
@@ -1063,7 +1230,7 @@ const GRID_COLS = [
 const gridIsNum = (col) => col.type !== 'text';
 const gridDisplay = (p, col) => (col.type === 'money' ? money(p[col.key]) : col.type === 'int' ? num(p[col.key]) : p[col.key] || '');
 
-function renderProductGrid(rows) {
+function renderProductGrid(rows, totalCount = rows.length) {
   $('#productGridHead').innerHTML = GRID_COLS
     .map((c) => `<th class="${gridIsNum(c) ? 'num' : ''}">${esc(c.label)}</th>`).join('') + '<th class="col-actions"></th>';
 
@@ -1077,8 +1244,8 @@ function renderProductGrid(rows) {
       <button class="btn btn-sm btn-ghost" data-act="delete" data-id="${p.id}" title="Remove this product completely">Remove</button>
     </div></td></tr>`).join('');
 
-  $('#gridEmpty').hidden = rows.length > 0;
-  $('#productGrid').hidden = rows.length === 0;
+  $('#gridEmpty').hidden = totalCount > 0;
+  $('#productGrid').hidden = totalCount === 0;
 }
 
 /** Repaint one cell in place — avoids rebuilding the grid and losing focus. */
@@ -1459,7 +1626,7 @@ function answerOrders() {
 function answerMovers() {
   const from30 = dateKey(addDays(new Date(), -29));
   const rows = db.products
-    .map((p) => ({ p, sold: unitsSold(p.id, from30) }))
+    .map((p) => ({ p, sold: soldLast30(p.id) }))
     .filter((r) => r.sold > 0)
     .sort((a, b) => b.sold - a.sold)
     .slice(0, 5);
@@ -1624,22 +1791,28 @@ function renderPlan() {
   $('#planEmpty').hidden = planned.length > 0;
   $('#planTable').hidden = planned.length === 0;
   $('#planStatRow').innerHTML = '';
-  if (!planned.length) { renderPlanBadge(); return; }
+  if (!planned.length) { renderPlanBadge(0); return; }
 
   const start = monthKey();
   const keys = Array.from({ length: months }, (_, i) => addMonths(start, i));
 
-  const projected = planned.map((p) => ({ p, ...projectPlan(p, months) }));
+  const allProjected = planned.map((p) => ({ p, ...projectPlan(p, months) }));
   // Soonest shortfall first — that is what needs solving.
-  projected.sort((a, b) => {
+  allProjected.sort((a, b) => {
     if (a.short === b.short) return a.p.name.localeCompare(b.p.name);
     if (!a.short) return 1;
     if (!b.short) return -1;
     return a.short < b.short ? -1 : 1;
   });
 
-  const shortCount = projected.filter((r) => r.short).length;
-  const totalPlanned = projected.reduce((s, r) => s + r.row.reduce((t, c) => t + c.planned, 0), 0);
+  const projected = allProjected.slice(0, ui.planLimit);
+  const planHidden = allProjected.length - projected.length;
+  const planMore = $('#planMore');
+  planMore.hidden = planHidden <= 0;
+  planMore.textContent = `Show more (${num(planHidden)} of ${num(allProjected.length)} not shown)`;
+
+  const shortCount = allProjected.filter((r) => r.short).length;
+  const totalPlanned = allProjected.reduce((s, r) => s + r.row.reduce((t, c) => t + c.planned, 0), 0);
   $('#planStatRow').innerHTML = [
     statTile({ label: 'Products planned', value: num(planned.length), sub: `over the next ${num(months)} months` }),
     statTile({
@@ -1674,12 +1847,16 @@ function renderPlan() {
     }).join('')}
   </tr>`).join('');
 
-  renderPlanBadge();
+  renderPlanBadge(shortCount);
 }
 
-function renderPlanBadge() {
+/** Takes the count already worked out by renderPlan rather than projecting
+ *  every product a second time. */
+function renderPlanBadge(shortCount) {
   const badge = $('#planBadge');
-  const n = db.products.filter((p) => hasPlan(p) && projectPlan(p, ui.planMonths).short).length;
+  const n = shortCount !== undefined
+    ? shortCount
+    : db.products.filter((p) => hasPlan(p) && projectPlan(p, ui.planMonths).short).length;
   badge.textContent = n;
   badge.hidden = n === 0;
 }
@@ -1703,14 +1880,20 @@ function renderReorder() {
   $('#coverDaysLabel').textContent = num(db.settings.coverDays || 30);
 
   // Soonest deadline first — that is the order she has to work through.
-  const rows = needsOrder().sort((a, b) => daysUntilOrder(a) - daysUntilOrder(b));
+  const allRows = [...needsOrder()].sort((a, b) => daysUntilOrder(a) - daysUntilOrder(b));
+  const rows = allRows.slice(0, ui.reorderLimit);
   const body = $('#reorderTable tbody');
-  let total = 0;
+  // The total covers the whole list, not just the part on screen.
+  let total = allRows.reduce((s, p) => s + suggestedOrder(p) * p.cost, 0);
+
+  const hiddenCount = allRows.length - rows.length;
+  const more = $('#reorderMore');
+  more.hidden = hiddenCount <= 0;
+  more.textContent = `Show more (${num(hiddenCount)} of ${num(allRows.length)} not shown)`;
 
   body.innerHTML = rows.map((p) => {
     const qty = suggestedOrder(p);
     const cost = qty * p.cost;
-    total += cost;
     return `<tr data-id="${p.id}">
       <td><span class="p-name">${esc(p.name)}</span>
         <div class="p-meta">${esc(p.sku || p.category || '—')} · ${STATUS_TEXT[status(p)].toLowerCase()}</div></td>
@@ -1728,8 +1911,8 @@ function renderReorder() {
   }).join('');
 
   $('#reorderTotal').textContent = money(total);
-  $('#reorderEmpty').hidden = rows.length > 0;
-  $('#reorderTable').hidden = rows.length === 0;
+  $('#reorderEmpty').hidden = allRows.length > 0;
+  $('#reorderTable').hidden = allRows.length === 0;
 }
 
 /* Sales history by month --------------------------------------------------- */
@@ -2457,7 +2640,7 @@ function exportProductsCsv() {
   const from30 = dateKey(addDays(new Date(), -29));
   const rows = db.products.map((p) => [
     p.name, p.sku, p.category, p.supplier, p.unit, p.stock, onOrder(p.id), p.reorderPoint, p.reorderQty,
-    p.leadTimeDays, p.cost, p.price, unitsSold(p.id, from30), STATUS_TEXT[status(p)],
+    p.leadTimeDays, p.cost, p.price, soldLast30(p.id), STATUS_TEXT[status(p)],
     orderByDate(p) || '', suggestedOrder(p),
   ]);
   download(`products-${dateKey()}.csv`, toCsv(
@@ -2818,8 +3001,8 @@ function applyTheme(theme) {
   else delete document.documentElement.dataset.theme;
 }
 
-function init() {
-  load();
+async function init() {
+  await load();
   applyTheme(localStorage.getItem(THEME_KEY));
   renderAll();
   updateUndoButton();
@@ -2955,10 +3138,15 @@ function init() {
     e.target.value = '';
   });
 
-  /* Filters & sorting */
-  $('#productSearch').addEventListener('input', renderProducts);
-  $('#categoryFilter').addEventListener('change', renderProducts);
-  $('#statusFilter').addEventListener('change', renderProducts);
+  /* Filters & sorting — a new filter starts the list from the top again. */
+  const refilter = () => { ui.productLimit = PAGE_STEP; renderProducts(); };
+  $('#productSearch').addEventListener('input', refilter);
+  $('#categoryFilter').addEventListener('change', refilter);
+  $('#statusFilter').addEventListener('change', refilter);
+  $('#productsMore').addEventListener('click', () => { ui.productLimit += PAGE_STEP; renderProducts(); });
+  $('#gridMore').addEventListener('click', () => { ui.productLimit += PAGE_STEP; renderProducts(); });
+  $('#planMore').addEventListener('click', () => { ui.planLimit += PAGE_STEP; renderPlan(); });
+  $('#reorderMore').addEventListener('click', () => { ui.reorderLimit += PAGE_STEP; renderReorder(); });
   $$('#productTable .sortable').forEach((th) => th.addEventListener('click', () => {
     const key = th.dataset.sort;
     ui.productSort = { key, dir: ui.productSort.key === key ? -ui.productSort.dir : 1 };

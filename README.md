@@ -211,6 +211,30 @@ order = (daily rate × (days of cover + lead time)) + alert level − what's in 
 A product shows up on the **To buy** page when its stock is at or below its alert level,
 **or** when its order-by date has arrived.
 
+## Big catalogues
+
+Tested with **10,000 products**, 18 months of demand plan each, and 20,000 sales — roughly
+6.5MB of data:
+
+| | |
+|---|---|
+| Opening the app | under a second |
+| Switching pages | 120–250ms |
+| Searching all 10,000 | under 200ms |
+| Saving an edit | around 0.6s |
+
+Two things make that work, and they matter if the catalogue is large:
+
+- **Long lists are shown in pages of 200**, with a *Show more* button and a count of what's
+  not shown. Filters, totals and the buying list still cover **everything** — only the rows
+  drawn on screen are limited. Ten thousand rows at once is about a million elements, which
+  no browser handles gracefully.
+- **Storage moves to IndexedDB automatically** when the data outgrows the browser's
+  ~5MB localStorage limit. Nothing needs setting up; it switches on the first save that
+  doesn't fit, and the undo history follows it.
+
+Everything is still one folder of plain files with no install and no internet.
+
 ## Where the data is kept
 
 Everything is saved **in the browser on that device** — nothing is sent anywhere. That
