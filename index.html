@@ -28,6 +28,7 @@
 <nav class="tabs" role="tablist">
   <button class="tab is-active" role="tab" data-view="dashboard">Overview</button>
   <button class="tab" role="tab" data-view="products">Products</button>
+  <button class="tab" role="tab" data-view="plan">Plan <span class="tab-badge" id="planBadge" hidden>0</span></button>
   <button class="tab" role="tab" data-view="reorder">To&nbsp;buy <span class="tab-badge" id="reorderBadge" hidden>0</span></button>
   <button class="tab" role="tab" data-view="sales">Sales</button>
   <button class="tab" role="tab" data-view="data">Settings</button>
@@ -130,6 +131,34 @@
         </table>
       </div>
       <p class="empty" id="productsEmpty" hidden>No products yet. Use <strong>+ New product</strong> to add the first one, or load the demo data from Settings.</p>
+    </div>
+  </section>
+
+  <!-- ───────────────────────── Plan ───────────────────────── -->
+  <section class="view" id="view-plan">
+    <div class="toolbar">
+      <div class="toolbar-text">
+        <h2 class="view-title">Stock against the demand plan</h2>
+        <p class="muted">What's left at the end of each month if the plan happens as written.
+          Anything below zero is a shortfall to cover.</p>
+      </div>
+      <div class="seg" id="planRange" role="group" aria-label="How far ahead to project">
+        <button class="seg-btn" data-months="6">6 months</button>
+        <button class="seg-btn is-active" data-months="12">12 months</button>
+        <button class="seg-btn" data-months="18">18 months</button>
+      </div>
+    </div>
+    <div class="stat-row" id="planStatRow"></div>
+    <div class="card card-flush">
+      <div class="table-scroll">
+        <table class="table table-plan" id="planTable">
+          <thead><tr id="planHead"></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="empty" id="planEmpty" hidden>No demand plan yet. Import a spreadsheet with a column
+        per month — headings like <code>Jan-26</code>, <code>2026-01</code> or <code>01/2026</code> are
+        all understood — and the projection appears here.</p>
     </div>
   </section>
 
@@ -269,6 +298,8 @@
       <label class="field"><span>Selling price per unit</span>
         <input class="input" id="p_price" type="number" min="0" step="0.01" value="0"></label>
     </div>
+    <label class="check" style="margin-top:14px"><input type="checkbox" id="p_discontinued">
+      <span>Discontinued — keep the record, but stop suggesting orders for it</span></label>
     <p class="form-error" id="productError" hidden></p>
     <div class="modal-foot">
       <button class="btn btn-danger btn-ghost" type="button" id="deleteProduct" hidden>Delete</button>

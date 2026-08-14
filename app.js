@@ -42,6 +42,53 @@ const daysBetween = (a, b) => Math.round((parseKey(b) - parseKey(a)) / 86400000)
 const shortDate = (k) => parseKey(k).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
 const longDate = (k) => parseKey(k).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 
+/* ── Months, for the demand plan ───────────────────────────────────────── */
+
+const MONTH_ABBR = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+
+/** "2026-08" for a Date. */
+const monthKey = (d = new Date()) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`;
+const isMonthKey = (k) => /^\d{4}-(0[1-9]|1[0-2])$/.test(String(k));
+const addMonths = (key, n) => {
+  const [y, m] = key.split('-').map(Number);
+  const d = new Date(y, m - 1 + n, 1);
+  return monthKey(d);
+};
+const daysInMonth = (key) => {
+  const [y, m] = key.split('-').map(Number);
+  return new Date(y, m, 0).getDate();
+};
+const monthLabel = (key) => {
+  const [y, m] = key.split('-').map(Number);
+  return new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: 'short', year: '2-digit' });
+};
+
+/**
+ * Reads a spreadsheet column heading as a month. Copes with what Excel
+ * actually puts on the clipboard — "Jan-26", "Jan 2026", "2026-01",
+ * "01/2026" — and with a raw date if the cell was never formatted.
+ */
+function parseMonthHeader(raw) {
+  const s = String(raw ?? '').trim();
+  if (!s) return null;
+  const fullYear = (y) => (y < 100 ? 2000 + y : y);
+  const build = (y, m) => (m >= 1 && m <= 12 ? `${y}-${pad2(m)}` : null);
+
+  let m = s.match(/^(\d{4})[-/](\d{1,2})(?:[-/]\d{1,2})?(?:[T ].*)?$/);
+  if (m) return build(+m[1], +m[2]);
+
+  m = s.match(/^([A-Za-z]{3,})[\s\-/.]*(\d{2,4})$/);
+  if (m) {
+    const idx = MONTH_ABBR.indexOf(m[1].slice(0, 3).toLowerCase());
+    if (idx > -1) return build(fullYear(+m[2]), idx + 1);
+  }
+
+  m = s.match(/^(\d{1,2})[-/](\d{4})$/);
+  if (m) return build(+m[2], +m[1]);
+
+  return null;
+}
+
 /* ── Storage ───────────────────────────────────────────────────────────── */
 
 const emptyDb = () => ({
@@ -82,6 +129,17 @@ function normalise(input) {
   };
 }
 
+/** Monthly demand plan: { "2026-08": 120, … }, junk keys dropped. */
+function normDemand(input) {
+  const out = {};
+  if (input && typeof input === 'object') {
+    Object.entries(input).forEach(([k, v]) => {
+      if (isMonthKey(k) && Number.isFinite(Number(v))) out[k] = clampNum(v);
+    });
+  }
+  return out;
+}
+
 const normProduct = (p) => ({
   id: p.id || uid(),
   name: String(p.name || 'Unnamed'),
@@ -93,6 +151,8 @@ const normProduct = (p) => ({
   reorderPoint: clampNum(p.reorderPoint),
   reorderQty: clampNum(p.reorderQty),
   leadTimeDays: clampNum(p.leadTimeDays),
+  discontinued: !!p.discontinued,
+  demand: normDemand(p.demand),
   cost: clampNum(p.cost),
   price: clampNum(p.price),
   createdAt: p.createdAt || dateKey(),
@@ -185,8 +245,8 @@ function unitsSold(productId, fromKey, toKey) {
   ), 0);
 }
 
-/** Average units sold per day, measured over the last 30 days the product existed. */
-function velocity(p) {
+/** Average units actually sold per day, over the last 30 days the product existed. */
+function salesRate(p) {
   const window = 30;
   const from = dateKey(addDays(new Date(), -(window - 1)));
   const sold = unitsSold(p.id, from);
@@ -194,10 +254,94 @@ function velocity(p) {
   return sold / Math.min(window, age);
 }
 
-/** How many days the current stock lasts at the recent selling rate. */
+const hasPlan = (p) => p.demand && Object.keys(p.demand).length > 0;
+
+/** Planned units per day for the current month, or null with no plan for it. */
+function plannedRate(p) {
+  if (!hasPlan(p)) return null;
+  const key = monthKey();
+  const planned = p.demand[key];
+  if (planned === undefined) return null;
+  return planned / daysInMonth(key);
+}
+
+/**
+ * Expected units used per day. A demand plan is a deliberate statement about
+ * what is coming, so it beats extrapolating from the last 30 days; without
+ * one, fall back to what actually moved.
+ */
+function velocity(p) {
+  const planned = plannedRate(p);
+  return planned === null ? salesRate(p) : planned;
+}
+
+/**
+ * Total demand the plan asks for over the next `days`, walking month by
+ * month and pro-rating the part-months at each end. Null with no plan.
+ */
+function plannedDemandOverDays(p, days) {
+  if (!hasPlan(p)) return null;
+  const start = monthKey();
+  const dayOfMonth = new Date().getDate();
+  let remaining = days;
+  let total = 0;
+  for (let i = 0; i < 48 && remaining > 0; i++) {
+    const key = addMonths(start, i);
+    const dim = daysInMonth(key);
+    const available = i === 0 ? dim - dayOfMonth + 1 : dim;
+    const take = Math.min(available, remaining);
+    total += clampNum(p.demand[key]) * (take / dim);
+    remaining -= take;
+  }
+  return total;
+}
+
+/**
+ * Days until stock runs out. With a plan, walk it month by month rather
+ * than projecting one month's rate flat — planned demand rises and falls,
+ * and it is the plan that decides when the shelf actually empties.
+ */
 function daysOfCover(p) {
-  const v = velocity(p);
+  if (hasPlan(p)) {
+    const start = monthKey();
+    const dayOfMonth = new Date().getDate();
+    let running = p.stock;
+    let elapsed = 0;
+    for (let i = 0; i < 48; i++) {
+      const key = addMonths(start, i);
+      const dim = daysInMonth(key);
+      const available = i === 0 ? dim - dayOfMonth + 1 : dim;
+      const planned = clampNum(p.demand[key]) * (available / dim);
+      if (planned > 0 && running - planned < 0) {
+        return elapsed + Math.floor((running / planned) * available);
+      }
+      running -= planned;
+      elapsed += available;
+    }
+    return Infinity;
+  }
+  const v = salesRate(p);
   return v > 0 ? p.stock / v : Infinity;
+}
+
+/**
+ * Projected stock at the end of each of the next `months` months, running
+ * the demand plan down against what's on hand. `short` is the first month
+ * it goes negative — the shortfall she has to solve for.
+ */
+function projectPlan(p, months = 12) {
+  const start = monthKey();
+  let running = p.stock;
+  let short = null;
+  const row = [];
+  for (let i = 0; i < months; i++) {
+    const key = addMonths(start, i);
+    const planned = clampNum(p.demand?.[key]);
+    running -= planned;
+    if (short === null && running < 0) short = key;
+    row.push({ key, planned, closing: running });
+  }
+  return { row, short };
 }
 
 function status(p) {
@@ -237,7 +381,10 @@ function orderByDate(p) {
  */
 function suggestedOrder(p) {
   const coverDays = clampNum(db.settings.coverDays, 1) || 30;
-  let qty = Math.ceil(velocity(p) * (coverDays + leadTime(p)) + p.reorderPoint - p.stock);
+  const horizon = coverDays + leadTime(p);
+  // Size against the plan when there is one, so a ramp-up isn't under-ordered.
+  const need = plannedDemandOverDays(p, horizon) ?? salesRate(p) * horizon;
+  let qty = Math.ceil(need + p.reorderPoint - p.stock);
   if (qty < p.reorderQty) qty = p.reorderQty;
   if (p.reorderQty > 1) qty = Math.ceil(qty / p.reorderQty) * p.reorderQty;
   return Math.max(1, qty);
@@ -248,7 +395,9 @@ function suggestedOrder(p) {
  * which is the case a plain stock level hides: a product can look well
  * stocked and still be late to reorder if the supplier is slow.
  */
-const needsOrder = () => db.products.filter((p) => status(p) !== 'ok' || daysUntilOrder(p) <= 0);
+const needsOrder = () => db.products.filter((p) => (
+  !p.discontinued && (status(p) !== 'ok' || daysUntilOrder(p) <= 0)
+));
 
 /* ── Toast & confirm ───────────────────────────────────────────────────── */
 
@@ -439,6 +588,7 @@ const ui = {
   productSort: { key: 'name', dir: 1 },
   salesLimit: 25,
   productMode: 'list',
+  planMonths: 12,
 };
 
 function renderAll() {
@@ -447,6 +597,7 @@ function renderAll() {
   renderReorderBadge();
   renderDashboard();
   renderProducts();
+  renderPlan();
   renderReorder();
   renderSales();
   renderSettings();
@@ -948,6 +1099,71 @@ function showProductMode(mode) {
 
 /* To buy ------------------------------------------------------------------ */
 
+/* Plan --------------------------------------------------------------------- */
+
+function renderPlan() {
+  const months = ui.planMonths;
+  const planned = db.products.filter(hasPlan);
+
+  $('#planEmpty').hidden = planned.length > 0;
+  $('#planTable').hidden = planned.length === 0;
+  $('#planStatRow').innerHTML = '';
+  if (!planned.length) { renderPlanBadge(); return; }
+
+  const start = monthKey();
+  const keys = Array.from({ length: months }, (_, i) => addMonths(start, i));
+
+  const projected = planned.map((p) => ({ p, ...projectPlan(p, months) }));
+  // Soonest shortfall first — that is what needs solving.
+  projected.sort((a, b) => {
+    if (a.short === b.short) return a.p.name.localeCompare(b.p.name);
+    if (!a.short) return 1;
+    if (!b.short) return -1;
+    return a.short < b.short ? -1 : 1;
+  });
+
+  const shortCount = projected.filter((r) => r.short).length;
+  const totalPlanned = projected.reduce((s, r) => s + r.row.reduce((t, c) => t + c.planned, 0), 0);
+  $('#planStatRow').innerHTML = [
+    statTile({ label: 'Products planned', value: num(planned.length), sub: `over the next ${num(months)} months` }),
+    statTile({
+      label: 'Run short', value: num(shortCount),
+      sub: shortCount ? 'need covering' : 'plan is fully covered',
+      subClass: shortCount ? 'is-bad' : 'is-good', alert: shortCount > 0,
+    }),
+    statTile({ label: 'Total demand', value: num(totalPlanned), sub: 'units across the plan' }),
+  ].join('');
+
+  $('#planHead').innerHTML = `<th class="plan-name">Product</th><th>Runs short</th><th class="num">In stock</th>`
+    + keys.map((k) => `<th class="plan-month">${esc(monthLabel(k))}</th>`).join('');
+
+  $('#planTable tbody').innerHTML = projected.map(({ p, row, short }) => `<tr data-id="${p.id}">
+    <td class="plan-name"><span class="p-name">${esc(p.name)}</span>
+      <div class="p-meta">${esc(p.sku || '—')}${p.discontinued ? ' · discontinued' : ''}</div></td>
+    <td>${short
+      ? `<span class="plan-short-label">▼ ${esc(monthLabel(short))}</span>`
+      : `<span class="plan-ok-label">covered</span>`}</td>
+    <td class="num strong">${num(p.stock)}</td>
+    ${row.map((c) => {
+      const isShort = c.closing < 0;
+      const idle = c.planned === 0 && !isShort;
+      return `<td class="plan-cell plan-month${isShort ? ' is-short' : ''}${c.key === short ? ' is-first-short' : ''}${idle ? ' plan-idle' : ''}">
+        <span class="plan-closing">${num(c.closing)}</span>
+        <span class="plan-demand">${c.planned ? `−${num(c.planned)}` : '·'}</span>
+      </td>`;
+    }).join('')}
+  </tr>`).join('');
+
+  renderPlanBadge();
+}
+
+function renderPlanBadge() {
+  const badge = $('#planBadge');
+  const n = db.products.filter((p) => hasPlan(p) && projectPlan(p, ui.planMonths).short).length;
+  badge.textContent = n;
+  badge.hidden = n === 0;
+}
+
 /** When the order has to go out, worded by how urgent it is. */
 function orderByCell(p) {
   const d = daysUntilOrder(p);
@@ -1069,6 +1285,7 @@ function openProductModal(id) {
   $('#p_reorderPoint').value = p ? p.reorderPoint : 5;
   $('#p_reorderQty').value = p ? p.reorderQty : 10;
   $('#p_leadTimeDays').value = p ? p.leadTimeDays : clampNum(db.settings.defaultLeadTimeDays);
+  $('#p_discontinued').checked = p ? !!p.discontinued : false;
   $('#p_cost').value = p ? p.cost : 0;
   $('#p_price').value = p ? p.price : 0;
   $('#deleteProduct').hidden = !p;
@@ -1142,6 +1359,7 @@ function saveProduct(e) {
     reorderPoint: clampNum($('#p_reorderPoint').value),
     reorderQty: clampNum($('#p_reorderQty').value),
     leadTimeDays: clampNum($('#p_leadTimeDays').value),
+    discontinued: $('#p_discontinued').checked,
     cost: clampNum($('#p_cost').value),
     price: clampNum($('#p_price').value),
   };
@@ -1307,6 +1525,7 @@ const IMPORT_ALIASES = {
   reorderQty: ['usualorder', 'orderqty', 'reorderqty', 'packsize', 'pack', 'casesize', 'orderquantity', 'moq', 'minimumorderquantity', 'colisage'],
   leadTimeDays: ['leadtime', 'leadtimedays', 'leadtimeindays', 'deliverytime', 'deliverydays', 'supplierleadtime',
     'replenishmentleadtime', 'transittime', 'delaidelivraison', 'delai'],
+  lifecycle: ['status', 'itemstatus', 'productstatus', 'lifecycle', 'lifecyclestatus', 'state', 'active', 'etat', 'statut'],
   cost: ['cost', 'costprice', 'buyprice', 'buyingprice', 'purchase', 'purchaseprice', 'wholesale', 'prixachat', 'achat'],
   price: ['price', 'sellprice', 'sellingprice', 'saleprice', 'retail', 'retailprice', 'rrp', 'prixvente', 'vente', 'prix'],
 };
@@ -1365,11 +1584,20 @@ function readImportTable(text) {
   const rows = parseDelimited(text);
   if (rows.length < 1) return { error: 'Nothing to read there yet.' };
 
-  const header = rows[0].map(normHeader);
+  const rawHeader = rows[0];
+  const header = rawHeader.map(normHeader);
   const mapping = {};
   Object.entries(IMPORT_ALIASES).forEach(([field, aliases]) => {
     const idx = header.findIndex((h) => h && aliases.includes(h));
     if (idx > -1) mapping[field] = idx;
+  });
+
+  // Any column headed with a month is a demand-plan period, not a field.
+  const monthCols = [];
+  rawHeader.forEach((h, i) => {
+    if (Object.values(mapping).includes(i)) return;
+    const key = parseMonthHeader(h);
+    if (key) monthCols.push({ index: i, key });
   });
 
   if (mapping.name === undefined && mapping.sku === undefined) {
@@ -1383,16 +1611,28 @@ function readImportTable(text) {
     const sku = text2('sku');
     const name = text2('name') || sku;
     if (!name) return;
+
+    // Blank month cells mean "nothing planned", so they are left out rather
+    // than stored as a real zero — that distinction matters for a plan.
+    const demand = {};
+    monthCols.forEach(({ index, key }) => {
+      const cell = String(r[index] ?? '').trim();
+      if (cell !== '') demand[key] = parseLooseNumber(cell);
+    });
+
+    const lifecycle = text2('lifecycle').toLowerCase();
     items.push({
       sku, name: name.slice(0, 80),
       category: text2('category'), supplier: text2('supplier'), unit: text2('unit'),
       stock: numAt('stock'), reorderPoint: numAt('reorderPoint'), reorderQty: numAt('reorderQty'),
       leadTimeDays: numAt('leadTimeDays'), cost: numAt('cost'), price: numAt('price'),
+      discontinued: lifecycle ? /discontinu|inactive|obsolete|delisted|arret/.test(lifecycle) : undefined,
+      demand: Object.keys(demand).length ? demand : undefined,
     });
   });
 
   if (!items.length) return { error: 'Found the header row, but no product rows under it.' };
-  return { items, mapping, matched: Object.keys(mapping) };
+  return { items, mapping, matched: Object.keys(mapping), monthCols };
 }
 
 /** Existing product with the same code, or failing that the same name. */
@@ -1429,20 +1669,28 @@ function updateImportPreview() {
 
   const existing = result.items.filter((i) => findExisting(i)).length;
   const fresh = result.items.length - existing;
-  const cols = result.matched.map((f) => GRID_COLS.find((c) => c.key === f)?.label || f);
+  const FIELD_LABELS = { lifecycle: 'Status' };
+  const cols = result.matched.map((f) => FIELD_LABELS[f] || GRID_COLS.find((c) => c.key === f)?.label || f);
   const preview = result.items.slice(0, 6);
+  const months = result.monthCols || [];
+  const dropped = result.items.filter((i) => i.discontinued).length;
 
   box.innerHTML = `
     <div class="import-summary">
       <div><strong>${num(fresh)}</strong> new product${fresh === 1 ? '' : 's'}</div>
       <div><strong>${num(existing)}</strong> already here</div>
+      ${months.length ? `<div><strong>${num(months.length)}</strong> months of demand</div>` : ''}
+      ${dropped ? `<div><strong>${num(dropped)}</strong> discontinued</div>` : ''}
     </div>
     <p class="import-cols">Columns picked up: ${cols.map((c) => `<code>${esc(c)}</code>`).join(' ')}</p>
+    ${months.length ? `<p class="import-cols">Read as a monthly demand plan:
+      <code>${esc(monthLabel(months[0].key))}</code> → <code>${esc(monthLabel(months[months.length - 1].key))}</code></p>` : ''}
     <div class="import-table-wrap"><table class="table">
-      <thead><tr><th>Code</th><th>Product</th><th class="num">In stock</th><th class="num">Cost</th><th class="num">Price</th></tr></thead>
+      <thead><tr><th>Code</th><th>Product</th><th class="num">In stock</th>${months.length ? '<th class="num">Planned total</th>' : ''}<th class="num">Cost</th><th class="num">Price</th></tr></thead>
       <tbody>${preview.map((i) => `<tr>
-        <td>${esc(i.sku || '—')}</td><td>${esc(i.name)}</td>
+        <td>${esc(i.sku || '—')}${i.discontinued ? ' <span class="p-meta">discontinued</span>' : ''}</td><td>${esc(i.name)}</td>
         <td class="num">${i.stock === undefined ? '—' : num(i.stock)}</td>
+        ${months.length ? `<td class="num">${i.demand ? num(Object.values(i.demand).reduce((s, v) => s + v, 0)) : '—'}</td>` : ''}
         <td class="num">${i.cost === undefined ? '—' : money(i.cost)}</td>
         <td class="num">${i.price === undefined ? '—' : money(i.price)}</td>
       </tr>`).join('')}</tbody>
@@ -1703,6 +1951,11 @@ function init() {
     const key = th.dataset.sort;
     ui.productSort = { key, dir: ui.productSort.key === key ? -ui.productSort.dir : 1 };
     renderProducts();
+  }));
+  $$('#planRange .seg-btn').forEach((b) => b.addEventListener('click', () => {
+    $$('#planRange .seg-btn').forEach((x) => x.classList.toggle('is-active', x === b));
+    ui.planMonths = Number(b.dataset.months);
+    renderPlan();
   }));
   $('#salesSearch').addEventListener('input', () => { ui.salesLimit = 25; renderSales(); });
   $('#salesMore').addEventListener('click', () => { ui.salesLimit += 50; renderSales(); });

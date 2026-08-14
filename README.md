@@ -21,7 +21,8 @@ your own products.
 
 | Page | What it answers |
 |---|---|
-| **Overview** | How much stock do I have, what needs attention, how much is selling, how many customers |
+| **Overview** | How much stock do I have, what needs attention, how much is moving |
+| **Plan** | Stock run down against the monthly demand plan — where the shortfalls land |
 | **Products** | The full list — stock level, how fast each one sells, how long it will last |
 | **To buy** | The shopping list for suppliers: what to order, how much, and roughly what it costs |
 | **Sales** | Every sale recorded, plus today's and this month's totals |
@@ -70,6 +71,31 @@ something to undo, and reverses whatever was just done — an edit, a deleted pr
 import, even *Erase everything*. Click it again to keep walking back through the last
 few changes. It remembers even if the page is closed and reopened, so a mistake found
 later can still be fixed.
+
+## The demand plan
+
+If the spreadsheet has **a column per month** — headings like `Jan-26`, `Jan 2026`,
+`2026-01` or `01/2026` are all understood — those columns are read as a **monthly demand
+plan** rather than as product fields. A blank month means *nothing planned*, which is not
+the same as a planned zero, so blanks are left out rather than stored.
+
+The **Plan** page then runs that plan down against what's in stock and shows what's left at
+the end of each month. The first month that goes below zero is the shortfall to solve, and
+it's called out in the **Runs short** column; the tab badge counts how many products are
+heading for one. Products are sorted by whose shortfall lands first.
+
+A **Status** column is picked up too. Anything reading *Discontinued* (or inactive,
+obsolete, delisted) is kept in the records but never suggested for ordering.
+
+Once a plan exists it drives the rest of the maths, because a plan is a deliberate
+statement about what is coming and beats extrapolating from the last 30 days:
+
+- **How long stock lasts** is worked out by walking the plan month by month, so a
+  ramp-up or a quiet season is accounted for instead of one flat rate.
+- **How much to order** covers the demand actually planned across the lead time and the
+  cover period.
+
+Without a plan, everything falls back to the recorded sales history as before.
 
 ## Lead time and the "order by" date
 
