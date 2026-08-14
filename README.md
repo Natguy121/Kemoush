@@ -27,7 +27,7 @@ your own products.
 | **Orders** | What's on order, when it's due, and what has actually turned up |
 | **Products** | The full list — stock level, how fast each one sells, how long it will last |
 | **To buy** | The shopping list for suppliers: what to order, how much, and roughly what it costs |
-| **Sales** | Every sale recorded, plus today's and this month's totals |
+| **Sales** | Month-by-month history going back years, plus every individual sale |
 | **Settings** | Shop name, currency, backups, demo data |
 
 ## Working with it like a spreadsheet
@@ -127,6 +127,24 @@ statement about what is coming and beats extrapolating from the last 30 days:
   cover period.
 
 Without a plan, everything falls back to the recorded sales history as before.
+
+## Sales history, month by month
+
+The top of the **Sales** page keeps the whole history in months rather than individual
+sales, over **1, 2, 3 or 4 years**. A bar per month shows the shape of the year — the peaks
+and the quiet stretches — and the table underneath gives units, number of sales and revenue
+for each one.
+
+Two comparison columns make it useful rather than just a record:
+
+- **vs last year** — the same month twelve months earlier, so seasonality doesn't get
+  mistaken for a trend.
+- **vs plan** — actual against the monthly demand plan, once a plan is loaded. This is the
+  one worth watching: it says whether the plan is holding up in reality.
+
+The month in progress is compared **like for like** — against the same span of last year,
+not the whole of it — and is labelled *so far this month*, so a half-finished month never
+looks like a collapse. **Export these months (CSV)** takes the table into a spreadsheet.
 
 ## Purchase orders, including the awkward ones
 

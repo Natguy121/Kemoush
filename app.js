@@ -689,6 +689,7 @@ const ui = {
   salesLimit: 25,
   productMode: 'list',
   planMonths: 12,
+  historyMonths: 24,
 };
 
 function renderAll() {
@@ -1731,6 +1732,133 @@ function renderReorder() {
   $('#reorderTable').hidden = rows.length === 0;
 }
 
+/* Sales history by month --------------------------------------------------- */
+
+/** Units, revenue and sale count per month — one pass, so long histories stay quick. */
+function monthlyTotals() {
+  const totals = {};
+  db.sales.forEach((s) => {
+    const key = String(s.date).slice(0, 7);
+    if (!totals[key]) totals[key] = { units: 0, revenue: 0, count: 0 };
+    totals[key].units += s.qty;
+    totals[key].revenue += s.qty * s.unitPrice;
+    totals[key].count += 1;
+  });
+  return totals;
+}
+
+/** Planned demand per month, added up across every product that has a plan. */
+function plannedTotals() {
+  const totals = {};
+  db.products.forEach((p) => {
+    if (!p.demand) return;
+    Object.entries(p.demand).forEach(([k, v]) => { totals[k] = (totals[k] || 0) + v; });
+  });
+  return totals;
+}
+
+/**
+ * The last `months` months, oldest first. Empty months before the first
+ * recorded sale are dropped so a short history doesn't show years of blanks.
+ */
+function salesHistory(months) {
+  const totals = monthlyTotals();
+  const planned = plannedTotals();
+  const now = monthKey();
+  const today = new Date();
+  const dayOfMonth = today.getDate();
+
+  /** Units sold in `monthk` up to the same day of the month as today. */
+  const unitsToSameDay = (monthk) => {
+    const cutoff = `${monthk}-${pad2(dayOfMonth)}`;
+    return db.sales.reduce((s, x) => (
+      x.date.slice(0, 7) === monthk && x.date <= cutoff ? s + x.qty : s
+    ), 0);
+  };
+
+  const rows = [];
+  for (let i = months - 1; i >= 0; i--) {
+    const key = addMonths(now, -i);
+    const t = totals[key] || { units: 0, revenue: 0, count: 0 };
+    const yearAgoKey = addMonths(key, -12);
+    const yearAgo = totals[yearAgoKey];
+    const partial = key === now;
+
+    // This month is only part-way through. Comparing a half month against a
+    // whole one reads like a collapse, so compare the same span instead.
+    const lastYear = !yearAgo ? null : partial ? unitsToSameDay(yearAgoKey) : yearAgo.units;
+    const plan = planned[key] === undefined ? undefined
+      : partial ? planned[key] * (dayOfMonth / daysInMonth(key)) : planned[key];
+
+    rows.push({ key, ...t, partial, planned: plan, lastYear });
+  }
+  const firstReal = rows.findIndex((r) => r.count > 0);
+  return firstReal > 0 ? rows.slice(firstReal) : rows;
+}
+
+function renderSalesHistory() {
+  const months = ui.historyMonths;
+  const rows = salesHistory(months);
+  const hasAny = rows.some((r) => r.count > 0);
+  const anyPlan = rows.some((r) => r.planned !== undefined);
+
+  $('#historyEmpty').hidden = hasAny;
+  $('#historyTable').hidden = !hasAny;
+  $('#exportHistoryCsv').hidden = !hasAny;
+
+  const every = rows.length > 30 ? 6 : rows.length > 16 ? 3 : 1;
+  renderBarChart($('#historyChart'), rows.map((r, i) => ({
+    label: monthLabel(r.key),
+    value: r.units,
+    tick: (rows.length - 1 - i) % every === 0 ? monthLabel(r.key) : '',
+    tipTitle: monthLabel(r.key),
+    tipRows: [
+      `${num(r.units)} units sold${r.partial ? ' so far' : ''}`,
+      `${num(r.count)} sales`,
+      ...(r.revenue ? [`${money(r.revenue)} taken`] : []),
+      ...(r.planned !== undefined ? [`${num(Math.round(r.planned))} planned${r.partial ? ' by now' : ''}`] : []),
+      ...(r.lastYear !== null ? [`${num(r.lastYear)} same point last year`] : []),
+    ],
+  })), { ariaLabel: `Units sold each month over the last ${months} months`, emptyText: 'No sales recorded yet.' });
+
+  const delta = (now, then) => {
+    if (then === null || then === undefined) return '<span class="muted">—</span>';
+    if (then === 0) return now > 0 ? '<span class="trend-pct is-good">new</span>' : '<span class="muted">—</span>';
+    const pct = Math.round(((now - then) / then) * 100);
+    if (pct === 0) return '<span class="muted">same</span>';
+    return `<span class="trend-pct ${pct > 0 ? 'is-good' : 'is-bad'}">${pct > 0 ? '▲' : '▼'} ${Math.abs(pct)}%</span>`;
+  };
+
+  $('#historyHead').innerHTML = `<th>Month</th><th class="num">Units</th><th class="num">Sales</th>`
+    + `<th class="num">Revenue</th><th class="num">vs last year</th>${anyPlan ? '<th class="num">vs plan</th>' : ''}`;
+
+  // Newest first in the table — the chart already reads left to right.
+  $('#historyTable tbody').innerHTML = [...rows].reverse().map((r) => `<tr>
+    <td><span class="p-name">${esc(monthLabel(r.key))}</span>${r.partial ? '<div class="p-meta">so far this month</div>' : ''}</td>
+    <td class="num strong">${num(r.units)}</td>
+    <td class="num">${num(r.count)}</td>
+    <td class="num">${money(r.revenue)}</td>
+    <td class="num">${delta(r.units, r.lastYear)}</td>
+    ${anyPlan ? `<td class="num">${r.planned === undefined ? '<span class="muted">—</span>' : delta(r.units, r.planned)}</td>` : ''}
+  </tr>`).join('');
+
+  const totUnits = rows.reduce((s, r) => s + r.units, 0);
+  const totRev = rows.reduce((s, r) => s + r.revenue, 0);
+  const totCount = rows.reduce((s, r) => s + r.count, 0);
+  $('#historyFoot').innerHTML = `<td class="strong">${num(rows.length)} months</td>
+    <td class="num strong">${num(totUnits)}</td><td class="num strong">${num(totCount)}</td>
+    <td class="num strong">${money(totRev)}</td><td></td>${anyPlan ? '<td></td>' : ''}`;
+}
+
+function exportHistoryCsv() {
+  const rows = salesHistory(ui.historyMonths);
+  download(`sales-by-month-${dateKey()}.csv`, toCsv(
+    ['Month', 'Units sold', 'Sales', 'Revenue', 'Same month last year', 'Planned demand'],
+    rows.map((r) => [r.key, r.units, r.count, r.revenue, r.lastYear ?? '', r.planned ?? '']),
+  ), 'text/csv');
+  toast('Monthly history exported.');
+}
+
 /* Orders ------------------------------------------------------------------- */
 
 function renderOrdersBadge() {
@@ -2049,6 +2177,7 @@ function printOneOrder(id) {
 /* Sales ------------------------------------------------------------------- */
 
 function renderSales() {
+  renderSalesHistory();
   const today = dateKey();
   const monthStart = `${today.slice(0, 7)}-01`;
   const todaySales = salesInRange(today);
@@ -2636,20 +2765,27 @@ function demoData() {
   ];
   const names = ['Maria', 'Jonas', 'Amina', 'Peter', 'Lena', 'Sofia', 'Omar', 'Grace', 'Tom', 'Yara', '', '', ''];
 
+  // Three years back, so the month-by-month history has something to show.
+  const HISTORY_DAYS = 365 * 3;
   const products = seed.map(([name, sku, category, supplier, unit, stock, rp, rq, cost, price]) =>
-    normProduct({ name, sku, category, supplier, unit, stock, reorderPoint: rp, reorderQty: rq, cost, price, createdAt: dateKey(addDays(new Date(), -75)) }));
+    normProduct({ name, sku, category, supplier, unit, stock, reorderPoint: rp, reorderQty: rq, cost, price, createdAt: dateKey(addDays(new Date(), -(HISTORY_DAYS + 10))) }));
 
   const sales = [];
-  for (let d = 59; d >= 0; d--) {
+  for (let d = HISTORY_DAYS - 1; d >= 0; d--) {
     const day = addDays(new Date(), -d);
     const key = dateKey(day);
     const weekend = [0, 6].includes(day.getDay());
-    const customers = Math.round((weekend ? 7 : 4) + Math.random() * 5);
+    // A December peak and a slow February, plus gentle year-on-year growth,
+    // so the seasonal and vs-last-year comparisons actually mean something.
+    const season = 1 + 0.35 * Math.cos(((day.getMonth() - 11) / 12) * 2 * Math.PI);
+    const growth = 1 + (HISTORY_DAYS - d) / HISTORY_DAYS * 0.25;
+    const base = (weekend ? 6 : 3.5) * season * growth;
+    const customers = Math.max(1, Math.round(base + Math.random() * 4));
     for (let c = 0; c < customers; c++) {
       const idx = Math.floor(Math.pow(Math.random(), 1.6) * products.length); // a few favourites dominate
       const p = products[Math.min(idx, products.length - 1)];
       const rate = seed[products.indexOf(p)][10];
-      const qty = Math.max(1, Math.round(rate * (0.4 + Math.random())));
+      const qty = Math.max(1, Math.round(rate * (0.4 + Math.random()) * season));
       sales.push(normSale({ id: uid(), productId: p.id, qty, unitPrice: p.price, buyer: names[Math.floor(Math.random() * names.length)], date: key }));
     }
   }
@@ -2672,6 +2808,7 @@ function showView(name) {
   $$('.tab').forEach((t) => t.classList.toggle('is-active', t.dataset.view === name));
   // Charts measure their container, so they must be drawn while the view is visible.
   if (name === 'dashboard') { renderSalesChart(); renderTopSellers(); }
+  if (name === 'sales') renderSalesHistory();
   if (name === 'ask') { greetAsk(); $('#chatInput').focus(); }
   window.scrollTo({ top: 0 });
 }
@@ -2840,6 +2977,12 @@ function init() {
     ui.planMonths = Number(b.dataset.months);
     renderPlan();
   }));
+  $$('#historyRange .seg-btn').forEach((b) => b.addEventListener('click', () => {
+    $$('#historyRange .seg-btn').forEach((x) => x.classList.toggle('is-active', x === b));
+    ui.historyMonths = Number(b.dataset.months);
+    renderSalesHistory();
+  }));
+  $('#exportHistoryCsv').addEventListener('click', exportHistoryCsv);
   $('#salesSearch').addEventListener('input', () => { ui.salesLimit = 25; renderSales(); });
   $('#salesMore').addEventListener('click', () => { ui.salesLimit += 50; renderSales(); });
   $$('#salesRange .seg-btn').forEach((b) => b.addEventListener('click', () => {
@@ -2902,7 +3045,10 @@ function init() {
   let resizeTimer;
   window.addEventListener('resize', () => {
     clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(() => { if (ui.view === 'dashboard') { renderSalesChart(); renderTopSellers(); } }, 150);
+    resizeTimer = setTimeout(() => {
+      if (ui.view === 'dashboard') { renderSalesChart(); renderTopSellers(); }
+      if (ui.view === 'sales') renderSalesHistory();
+    }, 150);
   });
 
   /* First run with nothing loaded — not even starter data — offer the demo. */

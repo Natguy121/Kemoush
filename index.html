@@ -243,6 +243,30 @@
   <!-- ───────────────────────── Sales ───────────────────────── -->
   <section class="view" id="view-sales">
     <div class="stat-row" id="salesStatRow"></div>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Month by month</h2>
+        <div class="seg" id="historyRange" role="group" aria-label="How far back to look">
+          <button class="seg-btn" data-months="12">1 year</button>
+          <button class="seg-btn is-active" data-months="24">2 years</button>
+          <button class="seg-btn" data-months="36">3 years</button>
+          <button class="seg-btn" data-months="48">4 years</button>
+        </div>
+      </div>
+      <div class="chart-wrap viz-root" id="historyChart"></div>
+      <div class="table-scroll">
+        <table class="table" id="historyTable">
+          <thead><tr id="historyHead"></tr></thead>
+          <tbody></tbody>
+          <tfoot><tr id="historyFoot"></tr></tfoot>
+        </table>
+      </div>
+      <p class="empty" id="historyEmpty" hidden>No sales recorded yet — once sales are in, every month
+        shows up here with how it compares to the same month a year earlier.</p>
+      <div class="card-foot"><button class="btn btn-sm" id="exportHistoryCsv">Export these months (CSV)</button></div>
+    </section>
+
     <div class="toolbar">
       <input type="search" id="salesSearch" class="input" placeholder="Search sales by product or customer…" aria-label="Search sales">
       <button class="btn btn-primary" data-open="sale">+ Record a sale</button>
