@@ -158,9 +158,12 @@
   <section class="view" id="view-plan">
     <div class="toolbar">
       <div class="toolbar-text">
-        <h2 class="view-title">Stock against the demand plan</h2>
-        <p class="muted">What's left at the end of each month if the plan happens as written.
-          Anything below zero is a shortfall to cover.</p>
+        <h2 class="view-title">How long stock lasts, month by month</h2>
+        <p class="muted">Each row is one product. The big number in a month is what would be
+          <strong>left at the end of it</strong>; underneath, <span class="plan-in">+</span> is stock
+          arriving on order and <strong>−</strong> is what gets used. Once it goes below zero the
+          product has run out — that month is shaded, and named in <strong>Runs short</strong>.
+          Demand comes from the imported plan where there is one, otherwise from recent sales.</p>
       </div>
       <div class="seg" id="planRange" role="group" aria-label="How far ahead to project">
         <button class="seg-btn" data-months="6">6 months</button>
@@ -176,9 +179,11 @@
           <tbody></tbody>
         </table>
       </div>
-      <p class="empty" id="planEmpty" hidden>No demand plan yet. Import a spreadsheet with a column
-        per month — headings like <code>Jan-26</code>, <code>2026-01</code> or <code>01/2026</code> are
-        all understood — and the projection appears here.</p>
+      <p class="empty" id="planEmpty" hidden>Nothing to project yet. This page needs to know what
+        gets used each month — either <strong>record some sales</strong>, or import a spreadsheet
+        with <strong>a column per month</strong> (headings like <code>Jan-26</code>,
+        <code>2026-01</code> or <code>01/2026</code> are all understood). Then every product shows
+        here with the month it runs out.</p>
       <div class="table-more"><button class="btn btn-sm" id="planMore" hidden>Show more</button></div>
     </div>
   </section>

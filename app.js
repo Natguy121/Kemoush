@@ -524,20 +524,29 @@ function daysOfCover(p) {
 function projectPlan(p, months = 12) {
   const start = monthKey();
   const incoming = incomingByMonth(p.id);
+  // With no demand plan, project what it has actually been using instead —
+  // otherwise the page is blank for anyone who hasn't imported a plan.
+  const fromPlan = hasPlan(p);
+  const dailyRate = fromPlan ? 0 : salesRate(p);
   let running = p.stock;
   let short = null;
   const row = [];
   for (let i = 0; i < months; i++) {
     const key = addMonths(start, i);
     const arriving = clampNum(incoming[key]);
-    const planned = clampNum(p.demand?.[key]);
+    const planned = fromPlan
+      ? clampNum(p.demand?.[key])
+      : Math.round(dailyRate * daysInMonth(key));
     running += arriving;
     running -= planned;
     if (short === null && running < 0) short = key;
     row.push({ key, planned, arriving, closing: running });
   }
-  return { row, short };
+  return { row, short, fromPlan };
 }
+
+/** Anything we can honestly draw a line forward for. */
+const canProject = (p) => hasPlan(p) || salesRate(p) > 0;
 
 function status(p) {
   if (p.stock <= 0) return 'out';
@@ -1581,8 +1590,8 @@ function answerToBuy() {
 }
 
 function answerShortfalls(month) {
-  const planned = db.products.filter(hasPlan);
-  if (!planned.length) return '<p>No demand plan is loaded yet, so I can\'t project shortfalls. Import a spreadsheet with a column per month and this will fill in.</p>';
+  const planned = db.products.filter(canProject);
+  if (!planned.length) return '<p>Nothing has a demand plan or any sales yet, so there is no line to project forward. Import a spreadsheet with a column per month, or record some sales, and this will fill in.</p>';
 
   if (month) {
     const hits = planned.map((p) => {
@@ -1596,9 +1605,9 @@ function answerShortfalls(month) {
   }
 
   const shorts = planned.map((p) => ({ p, short: projectPlan(p, 24).short })).filter((x) => x.short);
-  if (!shorts.length) return '<p>Nothing runs short in the next 24 months on the current plan. 🎉</p>';
+  if (!shorts.length) return '<p>Nothing runs short in the next 24 months at the current rate. 🎉</p>';
   shorts.sort((a, b) => (a.short < b.short ? -1 : 1));
-  return `<p><strong>${num(shorts.length)}</strong> product${shorts.length === 1 ? '' : 's'} run short on the plan:</p>`
+  return `<p><strong>${num(shorts.length)}</strong> product${shorts.length === 1 ? '' : 's'} run short:</p>`
     + listOf(shorts.map(({ p, short }) => li(`${esc(p.name)}:`, `<span class="is-late">${esc(monthLabel(short))}</span>`)));
 }
 
@@ -1786,11 +1795,12 @@ function greetAsk() {
 
 function renderPlan() {
   const months = ui.planMonths;
-  const planned = db.products.filter(hasPlan);
+  const planned = db.products.filter(canProject);
 
   $('#planEmpty').hidden = planned.length > 0;
   $('#planTable').hidden = planned.length === 0;
   $('#planStatRow').innerHTML = '';
+  $('#planMore').hidden = true;
   if (!planned.length) { renderPlanBadge(0); return; }
 
   const start = monthKey();
@@ -1813,22 +1823,28 @@ function renderPlan() {
 
   const shortCount = allProjected.filter((r) => r.short).length;
   const totalPlanned = allProjected.reduce((s, r) => s + r.row.reduce((t, c) => t + c.planned, 0), 0);
+  const withPlan = allProjected.filter((r) => r.fromPlan).length;
   $('#planStatRow').innerHTML = [
-    statTile({ label: 'Products planned', value: num(planned.length), sub: `over the next ${num(months)} months` }),
+    statTile({
+      label: 'Products projected', value: num(planned.length),
+      sub: withPlan === planned.length ? `all from a demand plan`
+        : withPlan === 0 ? 'all from recent sales'
+        : `${num(withPlan)} from a plan, the rest from sales`,
+    }),
     statTile({
       label: 'Run short', value: num(shortCount),
-      sub: shortCount ? 'need covering' : 'plan is fully covered',
+      sub: shortCount ? `within the next ${num(months)} months` : 'all covered for now',
       subClass: shortCount ? 'is-bad' : 'is-good', alert: shortCount > 0,
     }),
-    statTile({ label: 'Total demand', value: num(totalPlanned), sub: 'units across the plan' }),
+    statTile({ label: 'Expected demand', value: num(totalPlanned), sub: `units over ${num(months)} months` }),
   ].join('');
 
   $('#planHead').innerHTML = `<th class="plan-name">Product</th><th>Runs short</th><th class="num">In stock</th>`
     + keys.map((k) => `<th class="plan-month">${esc(monthLabel(k))}</th>`).join('');
 
-  $('#planTable tbody').innerHTML = projected.map(({ p, row, short }) => `<tr data-id="${p.id}">
+  $('#planTable tbody').innerHTML = projected.map(({ p, row, short, fromPlan }) => `<tr data-id="${p.id}">
     <td class="plan-name"><span class="p-name">${esc(p.name)}</span>
-      <div class="p-meta">${esc(p.sku || '—')}${p.discontinued ? ' · discontinued' : ''}</div></td>
+      <div class="p-meta">${esc(p.sku || '—')}${p.discontinued ? ' · discontinued' : ''}${fromPlan ? '' : ' · from sales'}</div></td>
     <td>${short
       ? `<span class="plan-short-label">▼ ${esc(monthLabel(short))}</span>`
       : `<span class="plan-ok-label">covered</span>`}</td>
@@ -2972,6 +2988,22 @@ function demoData() {
       sales.push(normSale({ id: uid(), productId: p.id, qty, unitPrice: p.price, buyer: names[Math.floor(Math.random() * names.length)], date: key }));
     }
   }
+
+  // A forward demand plan for each product, so the Plan page and the
+  // "vs plan" column have something real to show. Six months back for
+  // comparison, eighteen forward, following the same seasonal shape.
+  const planStart = addMonths(monthKey(), -6);
+  products.forEach((p, i) => {
+    const rate = seed[i][10];
+    const demand = {};
+    for (let m = 0; m < 24; m++) {
+      const key = addMonths(planStart, m);
+      const month = Number(key.slice(5)) - 1;
+      const season = 1 + 0.35 * Math.cos(((month - 11) / 12) * 2 * Math.PI);
+      demand[key] = Math.max(1, Math.round(rate * 30 * season));
+    }
+    p.demand = demand;
+  });
 
   return {
     version: 1,

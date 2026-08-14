@@ -23,7 +23,7 @@ your own products.
 |---|---|
 | **Overview** | How much stock do I have, what needs attention, how much is moving |
 | **Ask** | Type a question in plain English and get the answer from your own data |
-| **Plan** | Stock run down against the monthly demand plan — where the shortfalls land |
+| **Plan** | How long stock lasts month by month, and when each product runs out |
 | **Orders** | What's on order, when it's due, and what has actually turned up |
 | **Products** | The full list — stock level, how fast each one sells, how long it will last |
 | **To buy** | The shopping list for suppliers: what to order, how much, and roughly what it costs |
@@ -111,7 +111,9 @@ plan** rather than as product fields. A blank month means *nothing planned*, whi
 the same as a planned zero, so blanks are left out rather than stored.
 
 The **Plan** page then runs that plan down against what's in stock and shows what's left at
-the end of each month. The first month that goes below zero is the shortfall to solve, and
+the end of each month. Products with **no** plan are still shown — projected from what they
+have actually been selling, and marked *from sales* — so the page is useful before any plan
+is imported. The first month that goes below zero is the shortfall to solve, and
 it's called out in the **Runs short** column; the tab badge counts how many products are
 heading for one. Products are sorted by whose shortfall lands first.
 
@@ -213,15 +215,15 @@ A product shows up on the **To buy** page when its stock is at or below its aler
 
 ## Big catalogues
 
-Tested with **10,000 products**, 18 months of demand plan each, and 20,000 sales — roughly
-6.5MB of data:
+Tested with **17,000 products**, 24 months of demand plan each, and 40,000 sales — about
+13.5MB of data:
 
 | | |
 |---|---|
-| Opening the app | under a second |
-| Switching pages | 120–250ms |
-| Searching all 10,000 | under 200ms |
-| Saving an edit | around 0.6s |
+| Opening the app | ~1.5s |
+| Switching pages | 90–350ms |
+| Searching all 17,000 | ~200ms |
+| Saving an edit | ~0.9s |
 
 Two things make that work, and they matter if the catalogue is large:
 
