@@ -18,6 +18,7 @@
     </div>
   </div>
   <div class="topbar-actions">
+    <select class="input input-select country-picker" id="countryPicker" aria-label="Which market to show"></select>
     <button class="btn" id="undoBtn" hidden title="Undo the last change">↺ Undo</button>
     <button class="btn btn-primary" data-open="sale">Record a sale</button>
     <button class="btn" data-open="restock">Add stock</button>
@@ -27,6 +28,7 @@
 
 <nav class="tabs" role="tablist">
   <button class="tab is-active" role="tab" data-view="dashboard">Overview</button>
+  <button class="tab" role="tab" data-view="countries">Countries</button>
   <button class="tab" role="tab" data-view="ask">Ask</button>
   <button class="tab" role="tab" data-view="products">Products</button>
   <button class="tab" role="tab" data-view="plan">Plan <span class="tab-badge" id="planBadge" hidden>0</span></button>
@@ -76,6 +78,36 @@
         <span class="card-head-note">trend from the last 60 days of sales</span>
       </div>
       <div id="forecastBody"></div>
+    </section>
+  </section>
+
+  <!-- ───────────────────────── Countries ───────────────────────── -->
+  <section class="view" id="view-countries">
+    <div class="toolbar">
+      <div class="toolbar-text">
+        <h2 class="view-title">Markets</h2>
+        <p class="muted">Stock is held separately in each country. Pick one to work in it —
+          every other page then shows only that market — or stay on <strong>All markets</strong>
+          to see the whole picture at once.</p>
+      </div>
+    </div>
+    <div class="country-grid" id="countryGrid"></div>
+    <section class="card">
+      <div class="card-head"><h2>Side by side</h2>
+        <span class="card-head-note">every market, whatever is selected above</span></div>
+      <div class="table-scroll">
+        <table class="table" id="countryTable">
+          <thead><tr>
+            <th>Market</th><th class="num">Products</th><th class="num">Units in stock</th>
+            <th class="num">Stock value</th><th class="num">To order</th>
+            <th class="num">Out of stock</th><th class="num">Run short</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="empty" id="countriesEmpty" hidden>No products carry a country yet. Add one on a
+        product, use the <strong>Country</strong> column in Spreadsheet mode, or include a
+        <strong>Country</strong> column when importing.</p>
     </section>
   </section>
 
@@ -353,6 +385,9 @@
       <label class="field"><span>Category</span>
         <input class="input" id="p_category" list="categoryList" maxlength="40" placeholder="e.g. Groceries">
         <datalist id="categoryList"></datalist></label>
+      <label class="field"><span>Country</span>
+        <select class="input input-select" id="p_country"></select>
+        <small class="hint">Stock is counted per market.</small></label>
       <label class="field"><span>Supplier</span>
         <input class="input" id="p_supplier" maxlength="60" placeholder="Who you buy it from"></label>
       <label class="field"><span>Sold in</span>

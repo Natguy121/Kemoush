@@ -42,6 +42,35 @@ const daysBetween = (a, b) => Math.round((parseKey(b) - parseKey(a)) / 86400000)
 const shortDate = (k) => parseKey(k).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
 const longDate = (k) => parseKey(k).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 
+/* ── Countries ─────────────────────────────────────────────────────────── *
+ * Stock is held per market: the same product carries its own quantity,
+ * demand and lead time in each country, so each one is a row of its own.  */
+
+const COUNTRIES = [
+  { code: 'JO', name: 'Jordan', flag: '🇯🇴' },
+  { code: 'SA', name: 'Saudi Arabia', flag: '🇸🇦' },
+  { code: 'LB', name: 'Lebanon', flag: '🇱🇧' },
+];
+
+const countryByCode = (code) => COUNTRIES.find((c) => c.code === code);
+const countryName = (code) => countryByCode(code)?.name || code || 'No country';
+const countryFlag = (code) => countryByCode(code)?.flag || '🏳️';
+
+/** Accepts what a spreadsheet is likely to say and settles on a code. */
+function normCountry(raw) {
+  const s = String(raw ?? '').trim();
+  if (!s) return '';
+  const k = s.toLowerCase().replace(/[^a-z]/g, '');
+  const map = {
+    jo: 'JO', jor: 'JO', jordan: 'JO', jordanie: 'JO', hashemitekingdomofjordan: 'JO',
+    sa: 'SA', ksa: 'SA', sau: 'SA', saudi: 'SA', saudiarabia: 'SA', arabiesaoudite: 'SA', kingdomofsaudiarabia: 'SA',
+    lb: 'LB', lbn: 'LB', leb: 'LB', lebanon: 'LB', liban: 'LB',
+  };
+  if (map[k]) return map[k];
+  const direct = COUNTRIES.find((c) => c.code.toLowerCase() === k || c.name.toLowerCase().replace(/[^a-z]/g, '') === k);
+  return direct ? direct.code : s.slice(0, 24);
+}
+
 /* ── Months, for the demand plan ───────────────────────────────────────── */
 
 const MONTH_ABBR = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
@@ -240,6 +269,7 @@ const normProduct = (p) => ({
   name: String(p.name || 'Unnamed'),
   sku: String(p.sku || ''),
   category: String(p.category || ''),
+  country: normCountry(p.country),
   supplier: String(p.supplier || ''),
   unit: String(p.unit || ''),
   stock: clampNum(p.stock),
@@ -420,6 +450,12 @@ function idx() {
 }
 
 const productById = (id) => idx().byId.get(id);
+
+/** True when a product belongs to the market currently being looked at. */
+const inScope = (p) => !ui.country || p.country === ui.country;
+
+/** Products in the current market — the base list every page works from. */
+const scopedProducts = () => (ui.country ? db.products.filter(inScope) : db.products);
 
 /** Sales rows on or after `fromKey` (and before `toKey` when given). */
 function salesInRange(fromKey, toKey) {
@@ -644,14 +680,15 @@ function needsOrder() {
   // Several panels ask for this in a single render, and at ten thousand
   // products it is the most expensive question in the app — so answer it
   // once per change and hand back the same list.
-  if (!cache.needsOrder) {
-    cache.needsOrder = db.products.filter((p) => (
+  if (!cache.needsOrder) cache.needsOrder = {};
+  if (!cache.needsOrder[ui.country]) {
+    cache.needsOrder[ui.country] = scopedProducts().filter((p) => (
       !p.discontinued
       && (status(p) !== 'ok' || daysUntilOrder(p) <= 0)
       && suggestedOrder(p) > 0
     ));
   }
-  return cache.needsOrder;
+  return cache.needsOrder[ui.country];
 }
 
 /* ── Toast & confirm ───────────────────────────────────────────────────── */
@@ -850,6 +887,8 @@ const ui = {
   productLimit: 200,
   planLimit: 100,
   reorderLimit: 200,
+  // '' means every market at once; a code narrows the whole app to it.
+  country: '',
 };
 
 const PAGE_STEP = 200;
@@ -863,6 +902,8 @@ function renderAll() {
   renderReorderBadge();
   renderDashboard();
   renderProducts();
+  renderCountryPicker();
+  renderCountries();
   renderPlan();
   renderReorder();
   renderOrders();
@@ -897,10 +938,11 @@ function renderDashboard() {
   const unitsThis = thisWeek.reduce((s, x) => s + x.qty, 0);
   const unitsLast = lastWeek.reduce((s, x) => s + x.qty, 0);
 
-  const totalUnits = db.products.reduce((s, p) => s + p.stock, 0);
-  const stockValue = db.products.reduce((s, p) => s + p.stock * p.cost, 0);
+  const scoped = scopedProducts();
+  const totalUnits = scoped.reduce((s, p) => s + p.stock, 0);
+  const stockValue = scoped.reduce((s, p) => s + p.stock * p.cost, 0);
   const toBuy = needsOrder();
-  const outCount = db.products.filter((p) => status(p) === 'out').length;
+  const outCount = scoped.filter((p) => status(p) === 'out').length;
 
   const delta = (a, b) => {
     if (b === 0) return a > 0 ? 'new activity this week' : 'same as last week';
@@ -913,7 +955,7 @@ function renderDashboard() {
     statTile({
       label: 'Items in stock',
       value: num(totalUnits),
-      sub: `${num(db.products.length)} different products`,
+      sub: `${num(scoped.length)} different products${ui.country ? ` in ${countryName(ui.country)}` : ''}`,
     }),
     statTile({
       label: 'Needs buying',
@@ -1147,9 +1189,9 @@ function visibleProducts() {
   const cat = $('#categoryFilter').value;
   const st = $('#statusFilter').value;
 
-  let rows = db.products.map((p) => ({ p, sold30: soldLast30(p.id), st: status(p) }));
+  let rows = scopedProducts().map((p) => ({ p, sold30: soldLast30(p.id), st: status(p) }));
 
-  if (q) rows = rows.filter(({ p }) => [p.name, p.sku, p.category, p.supplier].join(' ').toLowerCase().includes(q));
+  if (q) rows = rows.filter(({ p }) => [p.name, p.sku, p.category, p.supplier, countryName(p.country)].join(' ').toLowerCase().includes(q));
   if (cat) rows = rows.filter(({ p }) => p.category === cat);
   if (st) rows = rows.filter((r) => r.st === st);
 
@@ -1164,7 +1206,7 @@ function visibleProducts() {
 
 function renderProducts() {
   // Category pickers stay in sync with whatever categories exist.
-  const cats = [...new Set(db.products.map((p) => p.category).filter(Boolean))].sort();
+  const cats = [...new Set(scopedProducts().map((p) => p.category).filter(Boolean))].sort();
   const filter = $('#categoryFilter');
   const keep = filter.value;
   filter.innerHTML = `<option value="">All categories</option>${cats.map((c) => `<option>${esc(c)}</option>`).join('')}`;
@@ -1226,6 +1268,7 @@ const GRID_COLS = [
   { key: 'sku', label: 'Code', type: 'text' },
   { key: 'name', label: 'Product', type: 'text' },
   { key: 'category', label: 'Category', type: 'text' },
+  { key: 'country', label: 'Country', type: 'country' },
   { key: 'supplier', label: 'Supplier', type: 'text' },
   { key: 'unit', label: 'Unit', type: 'text' },
   { key: 'stock', label: 'In stock', type: 'int' },
@@ -1236,8 +1279,12 @@ const GRID_COLS = [
   { key: 'price', label: 'Price', type: 'money' },
 ];
 
-const gridIsNum = (col) => col.type !== 'text';
-const gridDisplay = (p, col) => (col.type === 'money' ? money(p[col.key]) : col.type === 'int' ? num(p[col.key]) : p[col.key] || '');
+const gridIsNum = (col) => col.type === 'int' || col.type === 'money';
+const gridDisplay = (p, col) => (
+  col.type === 'money' ? money(p[col.key])
+    : col.type === 'int' ? num(p[col.key])
+    : col.type === 'country' ? (p.country ? `${countryFlag(p.country)} ${countryName(p.country)}` : '')
+    : p[col.key] || '');
 
 function renderProductGrid(rows, totalCount = rows.length) {
   $('#productGridHead').innerHTML = GRID_COLS
@@ -1308,6 +1355,26 @@ function beginGridEdit(td, seed) {
   const col = GRID_COLS.find((c) => c.key === td.dataset.key);
   if (!p || !col) return;
 
+  if (col.type === 'country') {
+    const sel = document.createElement('select');
+    sel.className = 'grid-input';
+    sel.innerHTML = `<option value="">—</option>`
+      + knownCountries().map((c) => `<option value="${esc(c.code)}"${p.country === c.code ? ' selected' : ''}>${c.flag} ${esc(c.name)}</option>`).join('');
+    td.replaceChildren(sel);
+    sel.focus();
+    let done = false;
+    const close = (commit) => {
+      if (done) return;
+      done = true;
+      if (commit && p.country !== sel.value) { p.country = sel.value; save(); renderAll(); return; }
+      refreshGridCell(td)?.focus();
+    };
+    sel.addEventListener('change', () => close(true));
+    sel.addEventListener('blur', () => close(true));
+    sel.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); close(false); } });
+    return;
+  }
+
   const input = document.createElement('input');
   input.className = 'grid-input';
   if (gridIsNum(col)) {
@@ -1355,7 +1422,7 @@ function beginGridEdit(td, seed) {
 }
 
 function addGridRow() {
-  const p = normProduct({ name: 'New product', id: uid(), createdAt: dateKey() });
+  const p = normProduct({ name: 'New product', id: uid(), country: ui.country, createdAt: dateKey() });
   db.products.push(p);
   save();
   renderAll();
@@ -1590,7 +1657,7 @@ function answerToBuy() {
 }
 
 function answerShortfalls(month) {
-  const planned = db.products.filter(canProject);
+  const planned = scopedProducts().filter(canProject);
   if (!planned.length) return '<p>Nothing has a demand plan or any sales yet, so there is no line to project forward. Import a spreadsheet with a column per month, or record some sales, and this will fill in.</p>';
 
   if (month) {
@@ -1645,11 +1712,12 @@ function answerMovers() {
 }
 
 function answerStockSummary() {
-  const total = db.products.reduce((s, p) => s + p.stock, 0);
-  const value = db.products.reduce((s, p) => s + p.stock * p.cost, 0);
-  const out = db.products.filter((p) => status(p) === 'out').length;
-  const low = db.products.filter((p) => status(p) === 'low').length;
-  return `<p>You have <strong>${num(total)}</strong> units across <strong>${num(db.products.length)}</strong> products`
+  const scoped = scopedProducts();
+  const total = scoped.reduce((s, p) => s + p.stock, 0);
+  const value = scoped.reduce((s, p) => s + p.stock * p.cost, 0);
+  const out = scoped.filter((p) => status(p) === 'out').length;
+  const low = scoped.filter((p) => status(p) === 'low').length;
+  return `<p>You have <strong>${num(total)}</strong> units across <strong>${num(scoped.length)}</strong> products${ui.country ? ` in ${esc(countryName(ui.country))}` : ''}`
     + `${value > 0 ? `, worth about <strong>${esc(money(value))}</strong> at cost` : ''}.</p>`
     + listOf([
       li('Out of stock:', num(out)),
@@ -1715,7 +1783,7 @@ function answerQuestion(raw) {
   if (/cost|spend|budget|money|price|worth|value/.test(l)) {
     const rows = needsOrder();
     const total = rows.reduce((s, p) => s + suggestedOrder(p) * p.cost, 0);
-    const stockValue = db.products.reduce((s, p) => s + p.stock * p.cost, 0);
+    const stockValue = scopedProducts().reduce((s, p) => s + p.stock * p.cost, 0);
     return `<p>The orders due now come to about <strong>${esc(money(total))}</strong> across ${num(rows.length)} product${rows.length === 1 ? '' : 's'}.</p>`
       + `<p>What you are already holding is worth about <strong>${esc(money(stockValue))}</strong> at cost.</p>`;
   }
@@ -1727,13 +1795,13 @@ function answerQuestion(raw) {
   if (month) return answerShortfalls(month);
   if (/order|buy|purchase|reorder|replenish|urgent|late|overdue|today|this week/.test(l)) return answerToBuy();
   if (/discontinued|inactive|obsolete/.test(l)) {
-    const rows = db.products.filter((p) => p.discontinued);
+    const rows = scopedProducts().filter((p) => p.discontinued);
     return rows.length
       ? `<p><strong>${num(rows.length)}</strong> discontinued:</p>` + listOf(rows.map((p) => li(`${esc(p.name)}:`, `${num(p.stock)} left`)))
       : '<p>Nothing is marked discontinued.</p>';
   }
   if (/lead time|delivery|supplier take|how long.*deliver/.test(l)) {
-    const rows = db.products.filter((p) => leadTime(p) > 0).sort((a, b) => leadTime(b) - leadTime(a)).slice(0, 8);
+    const rows = scopedProducts().filter((p) => leadTime(p) > 0).sort((a, b) => leadTime(b) - leadTime(a)).slice(0, 8);
     return rows.length
       ? '<p>Lead times, longest first:</p>' + listOf(rows.map((p) => li(`${esc(p.name)}:`, `${num(leadTime(p))} days`)))
       : '<p>No lead times are set yet. Add one per product, or a default under Settings, and I can tell you when each order has to go out.</p>';
@@ -1791,11 +1859,106 @@ function greetAsk() {
   ])}</p>`);
 }
 
+/* Countries ---------------------------------------------------------------- */
+
+/** Every market present in the data, plus the three known ones. */
+function knownCountries() {
+  const used = [...new Set(db.products.map((p) => p.country).filter(Boolean))];
+  const codes = [...new Set([...COUNTRIES.map((c) => c.code), ...used])];
+  return codes.map((code) => ({ code, name: countryName(code), flag: countryFlag(code) }));
+}
+
+/** The headline numbers for one market, worked out the same way as elsewhere. */
+function countryStats(code) {
+  const rows = db.products.filter((p) => p.country === code);
+  const was = ui.country;
+  ui.country = code;
+  invalidateDerived();
+  const toOrder = needsOrder().length;
+  const short = rows.filter((p) => canProject(p) && projectPlan(p, ui.planMonths).short).length;
+  ui.country = was;
+  invalidateDerived();
+  return {
+    code,
+    products: rows.length,
+    units: rows.reduce((s, p) => s + p.stock, 0),
+    value: rows.reduce((s, p) => s + p.stock * p.cost, 0),
+    out: rows.filter((p) => status(p) === 'out').length,
+    toOrder,
+    short,
+  };
+}
+
+function renderCountryPicker() {
+  const picker = $('#countryPicker');
+  const opts = [`<option value="">All markets</option>`]
+    .concat(knownCountries().map((c) => `<option value="${esc(c.code)}">${c.flag} ${esc(c.name)}</option>`));
+  picker.innerHTML = opts.join('');
+  picker.value = ui.country;
+}
+
+function renderCountries() {
+  const all = knownCountries();
+  const stats = all.map((c) => countryStats(c.code));
+  const anyTagged = stats.some((s) => s.products > 0);
+
+  $('#countriesEmpty').hidden = anyTagged;
+  $('#countryTable').hidden = !anyTagged;
+
+  $('#countryGrid').innerHTML = [
+    `<button type="button" class="country-card${ui.country === '' ? ' is-active' : ''}" data-country="">
+      <div class="country-card-head"><span class="country-flag">🌍</span>
+        <span class="country-name">All markets</span>
+        ${ui.country === '' ? '<span class="country-current">showing</span>' : ''}</div>
+      <div class="country-units">${num(stats.reduce((s, x) => s + x.units, 0))}</div>
+      <div class="country-sub">units across ${num(stats.reduce((s, x) => s + x.products, 0))} products</div>
+      <div class="country-tags">
+        <span class="country-tag">${money(stats.reduce((s, x) => s + x.value, 0))}</span>
+      </div>
+    </button>`,
+    ...all.map((c, i) => {
+      const s = stats[i];
+      return `<button type="button" class="country-card${ui.country === c.code ? ' is-active' : ''}" data-country="${esc(c.code)}">
+        <div class="country-card-head"><span class="country-flag">${c.flag}</span>
+          <span class="country-name">${esc(c.name)}</span>
+          ${ui.country === c.code ? '<span class="country-current">showing</span>' : ''}</div>
+        <div class="country-units">${num(s.units)}</div>
+        <div class="country-sub">units across ${num(s.products)} product${s.products === 1 ? '' : 's'}</div>
+        <div class="country-tags">
+          <span class="country-tag">${money(s.value)}</span>
+          ${s.toOrder ? `<span class="country-tag is-bad">${num(s.toOrder)} to order</span>` : ''}
+          ${s.out ? `<span class="country-tag is-bad">${num(s.out)} out</span>` : ''}
+        </div>
+      </button>`;
+    }),
+  ].join('');
+
+  $('#countryTable tbody').innerHTML = stats.map((s) => `<tr>
+    <td><span class="p-name">${countryFlag(s.code)} ${esc(countryName(s.code))}</span></td>
+    <td class="num">${num(s.products)}</td>
+    <td class="num strong">${num(s.units)}</td>
+    <td class="num">${money(s.value)}</td>
+    <td class="num">${s.toOrder ? `<span class="trend-pct is-bad">${num(s.toOrder)}</span>` : '<span class="muted">—</span>'}</td>
+    <td class="num">${s.out ? `<span class="trend-pct is-bad">${num(s.out)}</span>` : '<span class="muted">—</span>'}</td>
+    <td class="num">${s.short ? `<span class="trend-pct is-bad">${num(s.short)}</span>` : '<span class="muted">—</span>'}</td>
+  </tr>`).join('');
+}
+
+/** Switching market resets the paging, then redraws everything. */
+function setCountry(code) {
+  ui.country = code || '';
+  ui.productLimit = PAGE_STEP;
+  ui.planLimit = 100;
+  ui.reorderLimit = PAGE_STEP;
+  invalidateDerived();
+  renderAll();
+}
+
 /* Plan --------------------------------------------------------------------- */
 
 function renderPlan() {
   const months = ui.planMonths;
-  const planned = db.products.filter(canProject);
+  const planned = scopedProducts().filter(canProject);
 
   $('#planEmpty').hidden = planned.length > 0;
   $('#planTable').hidden = planned.length === 0;
@@ -2442,6 +2605,9 @@ function openProductModal(id) {
   $('#p_name').value = p ? p.name : '';
   $('#p_sku').value = p ? p.sku : '';
   $('#p_category').value = p ? p.category : '';
+  $('#p_country').innerHTML = `<option value="">No country</option>`
+    + knownCountries().map((c) => `<option value="${esc(c.code)}">${c.flag} ${esc(c.name)}</option>`).join('');
+  $('#p_country').value = p ? p.country : ui.country;
   $('#p_supplier').value = p ? p.supplier : '';
   $('#p_unit').value = p ? p.unit : '';
   $('#p_stock').value = p ? p.stock : 0;
@@ -2457,10 +2623,19 @@ function openProductModal(id) {
 }
 
 function productOptions(selectedId) {
-  if (!db.products.length) return '<option value="">Add a product first</option>';
-  return [...db.products]
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .map((p) => `<option value="${p.id}"${p.id === selectedId ? ' selected' : ''}>${esc(p.name)} — ${num(p.stock)} in stock</option>`)
+  // Scoped to the market being worked in, and labelled with it when looking
+  // at all of them — otherwise the same product appears three times over.
+  const rows = scopedProducts();
+  if (!rows.length) {
+    return `<option value="">${ui.country ? `No products in ${esc(countryName(ui.country))}` : 'Add a product first'}</option>`;
+  }
+  const showMarket = !ui.country && rows.some((p) => p.country);
+  return [...rows]
+    .sort((a, b) => a.name.localeCompare(b.name) || countryName(a.country).localeCompare(countryName(b.country)))
+    .map((p) => {
+      const where = showMarket && p.country ? ` ${countryFlag(p.country)} ${esc(countryName(p.country))}` : '';
+      return `<option value="${p.id}"${p.id === selectedId ? ' selected' : ''}>${esc(p.name)}${where} — ${num(p.stock)} in stock</option>`;
+    })
     .join('');
 }
 
@@ -2516,6 +2691,7 @@ function saveProduct(e) {
     name,
     sku: $('#p_sku').value.trim(),
     category: $('#p_category').value.trim(),
+    country: $('#p_country').value,
     supplier: $('#p_supplier').value.trim(),
     unit: $('#p_unit').value.trim(),
     stock: clampNum($('#p_stock').value),
@@ -2655,12 +2831,12 @@ const toCsv = (header, rows) => [header, ...rows].map((r) => r.map(csvCell).join
 function exportProductsCsv() {
   const from30 = dateKey(addDays(new Date(), -29));
   const rows = db.products.map((p) => [
-    p.name, p.sku, p.category, p.supplier, p.unit, p.stock, onOrder(p.id), p.reorderPoint, p.reorderQty,
+    p.name, p.sku, p.category, countryName(p.country), p.supplier, p.unit, p.stock, onOrder(p.id), p.reorderPoint, p.reorderQty,
     p.leadTimeDays, p.cost, p.price, soldLast30(p.id), STATUS_TEXT[status(p)],
     orderByDate(p) || '', suggestedOrder(p),
   ]);
   download(`products-${dateKey()}.csv`, toCsv(
-    ['Product', 'Code', 'Category', 'Supplier', 'Unit', 'In stock', 'On order', 'Alert at', 'Usual order',
+    ['Product', 'Code', 'Category', 'Country', 'Supplier', 'Unit', 'In stock', 'On order', 'Alert at', 'Usual order',
       'Lead time (days)', 'Cost', 'Price', 'Used last 30 days', 'Status', 'Order by',
       'Order this much'], rows), 'text/csv');
   toast('Products exported.');
@@ -2686,6 +2862,7 @@ const IMPORT_ALIASES = {
   sku: ['code', 'sku', 'barcode', 'ref', 'reference', 'productcode', 'itemcode', 'articlecode', 'art', 'codebarre'],
   name: ['product', 'productname', 'name', 'item', 'itemname', 'description', 'designation', 'article', 'nom', 'produit', 'libelle'],
   category: ['category', 'categories', 'type', 'group', 'department', 'categorie', 'famille', 'rayon'],
+  country: ['country', 'market', 'countrycode', 'region', 'territory', 'location', 'site', 'branch', 'pays', 'marche'],
   supplier: ['supplier', 'vendor', 'brand', 'make', 'manufacturer', 'fournisseur', 'marque'],
   unit: ['unit', 'units', 'uom', 'measure', 'packaging', 'unite'],
   stock: ['instock', 'stock', 'qty', 'quantity', 'onhand', 'stockonhand', 'currentstock', 'stocknow',
@@ -2794,7 +2971,8 @@ function readImportTable(text) {
     const lifecycle = text2('lifecycle').toLowerCase();
     items.push({
       sku, name: name.slice(0, 80),
-      category: text2('category'), supplier: text2('supplier'), unit: text2('unit'),
+      category: text2('category'), country: normCountry(text2('country')) || undefined,
+      supplier: text2('supplier'), unit: text2('unit'),
       stock: numAt('stock'), reorderPoint: numAt('reorderPoint'), reorderQty: numAt('reorderQty'),
       leadTimeDays: numAt('leadTimeDays'), cost: numAt('cost'), price: numAt('price'),
       discontinued: lifecycle ? /discontinu|inactive|obsolete|delisted|arret/.test(lifecycle) : undefined,
@@ -2806,11 +2984,19 @@ function readImportTable(text) {
   return { items, mapping, matched: Object.keys(mapping), monthCols };
 }
 
-/** Existing product with the same code, or failing that the same name. */
+/**
+ * Existing product with the same code, or failing that the same name —
+ * matched *within the same market*. The same SKU legitimately appears in
+ * Jordan, Saudi and Lebanon as separate rows with their own stock, so
+ * ignoring the country would fold them all into one.
+ */
 function findExisting(item) {
-  const bySku = item.sku && db.products.find((p) => p.sku && p.sku.toLowerCase() === item.sku.toLowerCase());
+  const sameMarket = (p) => item.country === undefined || p.country === item.country;
+  const bySku = item.sku && db.products.find((p) => (
+    p.sku && p.sku.toLowerCase() === item.sku.toLowerCase() && sameMarket(p)
+  ));
   if (bySku) return bySku;
-  return db.products.find((p) => p.name.toLowerCase() === item.name.toLowerCase());
+  return db.products.find((p) => p.name.toLowerCase() === item.name.toLowerCase() && sameMarket(p));
 }
 
 let importState = { items: null };
@@ -2966,8 +3152,26 @@ function demoData() {
 
   // Three years back, so the month-by-month history has something to show.
   const HISTORY_DAYS = 365 * 3;
-  const products = seed.map(([name, sku, category, supplier, unit, stock, rp, rq, cost, price]) =>
-    normProduct({ name, sku, category, supplier, unit, stock, reorderPoint: rp, reorderQty: rq, cost, price, createdAt: dateKey(addDays(new Date(), -(HISTORY_DAYS + 10))) }));
+  // The same catalogue is stocked in all three markets, each holding its own
+  // quantity — which is the point of the Countries page.
+  const MARKETS = [
+    { code: 'JO', stockFactor: 1, leadTime: 21 },
+    { code: 'SA', stockFactor: 2.4, leadTime: 35 },
+    { code: 'LB', stockFactor: 0.55, leadTime: 14 },
+  ];
+  const products = [];
+  MARKETS.forEach((m) => {
+    seed.forEach(([name, sku, category, supplier, unit, stock, rp, rq, cost, price]) => {
+      products.push(normProduct({
+        name, sku, category, supplier, unit,
+        country: m.code,
+        stock: Math.round(stock * m.stockFactor),
+        reorderPoint: Math.max(1, Math.round(rp * m.stockFactor)),
+        reorderQty: rq, leadTimeDays: m.leadTime, cost, price,
+        createdAt: dateKey(addDays(new Date(), -(HISTORY_DAYS + 10))),
+      }));
+    });
+  });
 
   const sales = [];
   for (let d = HISTORY_DAYS - 1; d >= 0; d--) {
@@ -2981,9 +3185,9 @@ function demoData() {
     const base = (weekend ? 6 : 3.5) * season * growth;
     const customers = Math.max(1, Math.round(base + Math.random() * 4));
     for (let c = 0; c < customers; c++) {
-      const idx = Math.floor(Math.pow(Math.random(), 1.6) * products.length); // a few favourites dominate
-      const p = products[Math.min(idx, products.length - 1)];
-      const rate = seed[products.indexOf(p)][10];
+      const pick = Math.floor(Math.pow(Math.random(), 1.6) * products.length); // a few favourites dominate
+      const p = products[Math.min(pick, products.length - 1)];
+      const rate = seed[products.indexOf(p) % seed.length][10];
       const qty = Math.max(1, Math.round(rate * (0.4 + Math.random()) * season));
       sales.push(normSale({ id: uid(), productId: p.id, qty, unitPrice: p.price, buyer: names[Math.floor(Math.random() * names.length)], date: key }));
     }
@@ -2994,7 +3198,7 @@ function demoData() {
   // comparison, eighteen forward, following the same seasonal shape.
   const planStart = addMonths(monthKey(), -6);
   products.forEach((p, i) => {
-    const rate = seed[i][10];
+    const rate = seed[i % seed.length][10] * MARKETS[Math.floor(i / seed.length)].stockFactor;
     const demand = {};
     for (let m = 0; m < 24; m++) {
       const key = addMonths(planStart, m);
@@ -3177,6 +3381,11 @@ async function init() {
   $('#statusFilter').addEventListener('change', refilter);
   $('#productsMore').addEventListener('click', () => { ui.productLimit += PAGE_STEP; renderProducts(); });
   $('#gridMore').addEventListener('click', () => { ui.productLimit += PAGE_STEP; renderProducts(); });
+  $('#countryPicker').addEventListener('change', (e) => setCountry(e.target.value));
+  $('#countryGrid').addEventListener('click', (e) => {
+    const card = e.target.closest('[data-country]');
+    if (card) setCountry(card.dataset.country);
+  });
   $('#planMore').addEventListener('click', () => { ui.planLimit += PAGE_STEP; renderPlan(); });
   $('#reorderMore').addEventListener('click', () => { ui.reorderLimit += PAGE_STEP; renderReorder(); });
   $$('#productTable .sortable').forEach((th) => th.addEventListener('click', () => {

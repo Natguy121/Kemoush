@@ -22,6 +22,7 @@ your own products.
 | Page | What it answers |
 |---|---|
 | **Overview** | How much stock do I have, what needs attention, how much is moving |
+| **Countries** | Jordan, Saudi Arabia and Lebanon side by side — and which one you're working in |
 | **Ask** | Type a question in plain English and get the answer from your own data |
 | **Plan** | How long stock lasts month by month, and when each product runs out |
 | **Orders** | What's on order, when it's due, and what has actually turned up |
@@ -29,6 +30,27 @@ your own products.
 | **To buy** | The shopping list for suppliers: what to order, how much, and roughly what it costs |
 | **Sales** | Month-by-month history going back years, plus every individual sale |
 | **Settings** | Shop name, currency, backups, demo data |
+
+## Countries
+
+Stock is held **separately in each market**. The same product carries its own quantity,
+demand plan and lead time in Jordan, Saudi Arabia and Lebanon, so each one is a row of its
+own — a slow supplier into Saudi doesn't make Lebanon look late.
+
+The **Countries** page shows all three side by side: units held, what they're worth, how
+many need ordering, how many are out, and how many are heading for a shortfall.
+
+Clicking a market — or using the picker at the top of the screen — **narrows the whole app**
+to it. Products, Plan, To buy, the Overview totals and the Ask answers all follow. Switch
+back to **All markets** to see everything at once.
+
+To set the country on a product: the **Country** field on the product form, the **Country**
+column in Spreadsheet mode, or a **Country** column in the spreadsheet you import —
+`Jordan`, `JO`, `KSA`, `Saudi Arabia`, `Liban`, `LB` and similar are all understood.
+
+Because the same code legitimately appears in every market, imports match **within a
+market**: re-importing Jordan's sheet updates Jordan's rows and leaves Saudi and Lebanon
+untouched.
 
 ## Working with it like a spreadsheet
 

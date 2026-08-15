@@ -278,6 +278,30 @@ main { padding: clamp(14px, 3vw, 26px); max-width: 1280px; margin: 0 auto; }
 }
 .grid-hint { font-size: 12.5px; color: var(--text-muted); flex: 1 1 320px; }
 
+/* ── Countries ─────────────────────────────────────────────────────────── */
+.country-picker { width: auto; min-width: 150px; }
+.country-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); margin-bottom: 18px; }
+.country-card {
+  text-align: left; font: inherit; cursor: pointer;
+  background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 16px 18px; box-shadow: var(--shadow);
+  display: flex; flex-direction: column; gap: 4px;
+}
+.country-card:hover { border-color: var(--axis); }
+.country-card.is-active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), var(--shadow); }
+.country-card-head { display: flex; align-items: center; gap: 9px; }
+.country-flag { font-size: 22px; line-height: 1; }
+.country-name { font-weight: 600; }
+.country-units { font-size: 27px; font-weight: 600; letter-spacing: -0.02em; margin-top: 6px; }
+.country-sub { font-size: 12.5px; color: var(--text-muted); }
+.country-tags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+.country-tag {
+  font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px;
+  background: var(--surface-2); border: 1px solid var(--border); color: var(--text-secondary);
+}
+.country-tag.is-bad { color: var(--critical); border-color: var(--critical); }
+.country-current { font-size: 12px; color: var(--accent); font-weight: 600; margin-left: auto; }
+
 /* ── Ask: the built-in assistant ───────────────────────────────────────── */
 .chat-card { display: flex; flex-direction: column; gap: 14px; max-width: 860px; margin: 0 auto; }
 .chat-log { display: flex; flex-direction: column; gap: 14px; min-height: 240px; max-height: 58vh; overflow-y: auto; }
