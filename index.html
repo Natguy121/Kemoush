@@ -1,577 +1,101 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Stock Manager</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📦</text></svg>">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#05070c">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>KEMOSH</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='13' fill='none' stroke='%235ad1ff' stroke-width='2'/><circle cx='16' cy='16' r='3' fill='%23ff6b5e'/></svg>">
 <link rel="stylesheet" href="styles.css">
 </head>
-<body>
+<body data-phase="idle">
 
-<header class="topbar">
-  <div class="brand">
-    <span class="brand-mark" aria-hidden="true">📦</span>
-    <div>
-      <h1 id="shopName">Stock Manager</h1>
-      <p class="brand-sub">Stock, orders &amp; sales in one place</p>
+<canvas id="view"></canvas>
+<video id="cam" playsinline muted autoplay></video>
+
+<!-- start -->
+<section id="gate" class="screen">
+  <div class="card">
+    <h1>KEMOSH</h1>
+    <p class="tag">Put the phone in a Cardboard. Whatever you look at straight on stops being there.</p>
+
+    <div class="row">
+      <button id="btnCam" class="primary">Use the camera</button>
+      <button id="btnRoom">Play the room instead</button>
     </div>
+    <p id="note" class="note" hidden></p>
+    <p id="bestLine" class="best"></p>
+
+    <button id="btnHow" class="link">How it is played</button>
+    <div id="how" class="how" hidden>
+      <ol>
+        <li><b>Scan.</b> Turn slowly on the spot with nobody in front of you. The phone
+          learns the empty room.</li>
+        <li><b>Hunt.</b> Phantoms are people the room doesn&rsquo;t account for. A ring marks
+          each one.</li>
+        <li><b>Do not look at them.</b> Hold a phantom just off to the side and its ring
+          fills. Full ring, banished, points.</li>
+        <li><b>Facing one unmakes it</b> &mdash; it dissolves, the ring empties, the streak
+          is gone. That is the whole difficulty.</li>
+      </ol>
+      <p class="fine">One camera means both eyes see the same picture. It sits right for
+        turning your head, but it is not true depth.</p>
+    </div>
+
+    <details class="opts">
+      <summary>Settings</summary>
+      <label><span>Stereo (Cardboard)</span><input id="optStereo" type="checkbox"></label>
+      <label><span>Lens correction</span>
+        <select id="optLens"><option value="off">off</option><option value="light">light</option><option value="strong">strong</option></select>
+      </label>
+      <label><span>Eye spacing</span><input id="optIpd" type="range" min="0" max="0.16" step="0.005"><output data-for="optIpd"></output></label>
+      <label><span>Camera width &deg;</span><input id="optFov" type="range" min="40" max="100" step="1"><output data-for="optFov"></output></label>
+      <label><span>Camera turned</span>
+        <select id="optRot"><option value="0">0&deg;</option><option value="90">90&deg;</option><option value="180">180&deg;</option><option value="270">270&deg;</option></select>
+      </label>
+      <label><span>Spot people</span><input id="optSens" type="range" min="0.5" max="2.2" step="0.05"><output data-for="optSens"></output></label>
+      <label><span>How completely</span><input id="optErase" type="range" min="0" max="1" step="0.05"><output data-for="optErase"></output></label>
+      <p class="fine">If the view looks rotated or squashed, it is <i>Camera turned</i> and
+        <i>Camera width</i> that fix it. If nobody ever vanishes, raise <i>Spot people</i>
+        and rescan.</p>
+    </details>
   </div>
-  <div class="topbar-actions">
-    <select class="input input-select country-picker" id="countryPicker" aria-label="Which market to show"></select>
-    <button class="btn" id="undoBtn" hidden title="Undo the last change">↺ Undo</button>
-    <button class="btn btn-primary" data-open="sale">Record a sale</button>
-    <button class="btn" data-open="restock">Add stock</button>
-    <button class="btn btn-icon" id="themeToggle" title="Switch light / dark" aria-label="Switch light or dark theme">◐</button>
+</section>
+
+<!-- scanning -->
+<section id="scanBar" class="strip">
+  <span class="dot"></span>
+  <span>Learning the room &mdash; <b id="scanPct">0%</b></span>
+  <button id="btnSkip" class="link">start anyway</button>
+  <button id="btnQuit" class="link">quit</button>
+</section>
+
+<!-- playing -->
+<section id="hud" class="strip">
+  <span>score <b id="mScore">0</b></span>
+  <span>time <b id="mTime">&mdash;</b></span>
+  <span>seen <b id="mSeen">0</b></span>
+  <span>room <b id="mCov">0%</b></span>
+  <button id="btnRescan" class="link">rescan</button>
+  <button id="btnMenu" class="link">quit</button>
+</section>
+
+<!-- finished -->
+<section id="over" class="screen">
+  <div class="card small">
+    <h2 id="overScore">0</h2>
+    <p id="overSub" class="tag"></p>
+    <div class="row">
+      <button id="btnAgain" class="primary">Again</button>
+    </div>
+    <p class="fine">Inside a Cardboard, double-tap the case to start another round.</p>
   </div>
-</header>
+</section>
 
-<nav class="tabs" role="tablist">
-  <button class="tab is-active" role="tab" data-view="dashboard">Overview</button>
-  <button class="tab" role="tab" data-view="countries">Countries</button>
-  <button class="tab" role="tab" data-view="ask">Ask</button>
-  <button class="tab" role="tab" data-view="products">Products</button>
-  <button class="tab" role="tab" data-view="plan">Plan <span class="tab-badge" id="planBadge" hidden>0</span></button>
-  <button class="tab" role="tab" data-view="reorder">To&nbsp;buy <span class="tab-badge" id="reorderBadge" hidden>0</span></button>
-  <button class="tab" role="tab" data-view="orders">Orders <span class="tab-badge" id="ordersBadge" hidden>0</span></button>
-  <button class="tab" role="tab" data-view="sales">Sales</button>
-  <button class="tab" role="tab" data-view="data">Settings</button>
-</nav>
-
-<main id="main">
-
-  <!-- ───────────────────────── Overview ───────────────────────── -->
-  <section class="view is-active" id="view-dashboard">
-    <div class="stat-row" id="statRow"></div>
-
-    <div class="grid-2">
-      <section class="card">
-        <div class="card-head">
-          <h2>How much is being bought</h2>
-          <div class="seg" id="salesRange" role="group" aria-label="Time range">
-            <button class="seg-btn is-active" data-days="14">14 days</button>
-            <button class="seg-btn" data-days="30">30 days</button>
-            <button class="seg-btn" data-days="90">90 days</button>
-          </div>
-        </div>
-        <div class="chart-wrap viz-root" id="salesChart"></div>
-        <p class="card-note" id="salesChartNote"></p>
-      </section>
-
-      <section class="card">
-        <div class="card-head"><h2>Best sellers</h2><span class="card-head-note">last 30 days</span></div>
-        <div class="chart-wrap viz-root" id="topChart"></div>
-      </section>
-    </div>
-
-    <section class="card">
-      <div class="card-head">
-        <h2>Needs attention</h2>
-        <button class="btn btn-sm" data-view-link="reorder">See the full buying list</button>
-      </div>
-      <div id="attentionList"></div>
-    </section>
-
-    <section class="card">
-      <div class="card-head">
-        <h2>Forecast — next 30 days</h2>
-        <span class="card-head-note">trend from the last 60 days of sales</span>
-      </div>
-      <div id="forecastBody"></div>
-    </section>
-  </section>
-
-  <!-- ───────────────────────── Countries ───────────────────────── -->
-  <section class="view" id="view-countries">
-    <div class="toolbar">
-      <div class="toolbar-text">
-        <h2 class="view-title">Markets</h2>
-        <p class="muted">Stock is held separately in each country. Pick one to work in it —
-          every other page then shows only that market — or stay on <strong>All markets</strong>
-          to see the whole picture at once.</p>
-      </div>
-    </div>
-    <div class="country-grid" id="countryGrid"></div>
-    <section class="card">
-      <div class="card-head"><h2>Side by side</h2>
-        <span class="card-head-note">every market, whatever is selected above</span></div>
-      <div class="table-scroll">
-        <table class="table" id="countryTable">
-          <thead><tr>
-            <th>Market</th><th class="num">Products</th><th class="num">Units in stock</th>
-            <th class="num">Stock value</th><th class="num">To order</th>
-            <th class="num">Out of stock</th><th class="num">Run short</th>
-          </tr></thead>
-          <tbody></tbody>
-        </table>
-      </div>
-      <p class="empty" id="countriesEmpty" hidden>No products carry a country yet. Add one on a
-        product, use the <strong>Country</strong> column in Spreadsheet mode, or include a
-        <strong>Country</strong> column when importing.</p>
-    </section>
-  </section>
-
-  <!-- ───────────────────────── Ask ───────────────────────── -->
-  <section class="view" id="view-ask">
-    <div class="card chat-card">
-      <div class="chat-log" id="chatLog" role="log" aria-live="polite"></div>
-      <div class="chat-chips" id="chatChips"></div>
-      <form class="chat-form" id="chatForm">
-        <input class="input" id="chatInput" autocomplete="off"
-          placeholder="Ask about stock — or just say how you're doing…" aria-label="Ask a question, or say how you are">
-        <button class="btn btn-primary" type="submit">Ask</button>
-      </form>
-      <p class="chat-note">Everything here stays on this computer — nothing is sent anywhere, and every
-        number comes straight from the products and plan you loaded. It's a small program rather than a
-        real mind, so for anything heavy, a person is worth reaching for.</p>
-    </div>
-  </section>
-
-  <!-- ───────────────────────── Products ───────────────────────── -->
-  <section class="view" id="view-products">
-    <div class="toolbar">
-      <input type="search" id="productSearch" class="input" placeholder="Search by name, code or category…" aria-label="Search products">
-      <select id="categoryFilter" class="input input-select" aria-label="Filter by category"></select>
-      <select id="statusFilter" class="input input-select" aria-label="Filter by stock status">
-        <option value="">All stock levels</option>
-        <option value="out">Out of stock</option>
-        <option value="low">Running low</option>
-        <option value="ok">Well stocked</option>
-      </select>
-      <div class="seg" id="productMode" role="group" aria-label="How to show the products">
-        <button class="seg-btn is-active" data-mode="list">List</button>
-        <button class="seg-btn" data-mode="grid">Spreadsheet</button>
-      </div>
-      <button class="btn" id="importProducts">Import from Excel</button>
-      <button class="btn btn-primary" data-open="product">+ New product</button>
-    </div>
-
-    <div class="card card-flush" id="productGridCard" hidden>
-      <div class="table-scroll">
-        <table class="table table-grid" id="productGrid">
-          <thead><tr id="productGridHead"></tr></thead>
-          <tbody></tbody>
-        </table>
-      </div>
-      <div class="grid-foot">
-        <button class="btn btn-sm" id="gridAddRow">+ Add a row</button>
-        <p class="grid-hint">Click a cell to edit it. <strong>Enter</strong> or <strong>Tab</strong> saves and moves on,
-          <strong>Esc</strong> undoes, and the <strong>arrow keys</strong> move around — same as a spreadsheet.
-          Changes save straight away.</p>
-      </div>
-      <p class="empty" id="gridEmpty" hidden>No products match this search.</p>
-      <div class="table-more"><button class="btn btn-sm" id="gridMore" hidden>Show more</button></div>
-    </div>
-
-    <div class="card card-flush" id="productListCard">
-      <div class="table-scroll">
-        <table class="table" id="productTable">
-          <thead>
-            <tr>
-              <th class="sortable" data-sort="name">Product</th>
-              <th class="sortable num" data-sort="stock">In stock</th>
-              <th class="num">Alert at</th>
-              <th class="sortable num" data-sort="sold30">Sold (30d)</th>
-              <th class="num">Lasts about</th>
-              <th>Status</th>
-              <th class="num">Price</th>
-              <th class="col-actions"></th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-      <p class="empty" id="productsEmpty" hidden>No products yet. Use <strong>+ New product</strong> to add the first one, or load the demo data from Settings.</p>
-      <div class="table-more"><button class="btn btn-sm" id="productsMore" hidden>Show more</button></div>
-    </div>
-  </section>
-
-  <!-- ───────────────────────── Plan ───────────────────────── -->
-  <section class="view" id="view-plan">
-    <div class="toolbar">
-      <div class="toolbar-text">
-        <h2 class="view-title">How long stock lasts, month by month</h2>
-        <p class="muted">Each row is one product. The big number in a month is what would be
-          <strong>left at the end of it</strong>; underneath, <span class="plan-in">+</span> is stock
-          arriving on order and <strong>−</strong> is what gets used. Once it goes below zero the
-          product has run out — that month is shaded, and named in <strong>Runs short</strong>.
-          Demand comes from the imported plan where there is one, otherwise from recent sales.</p>
-      </div>
-      <div class="seg" id="planRange" role="group" aria-label="How far ahead to project">
-        <button class="seg-btn" data-months="6">6 months</button>
-        <button class="seg-btn is-active" data-months="12">12 months</button>
-        <button class="seg-btn" data-months="18">18 months</button>
-      </div>
-    </div>
-    <div class="stat-row" id="planStatRow"></div>
-    <div class="card card-flush">
-      <div class="table-scroll">
-        <table class="table table-plan" id="planTable">
-          <thead><tr id="planHead"></tr></thead>
-          <tbody></tbody>
-        </table>
-      </div>
-      <p class="empty" id="planEmpty" hidden>Nothing to project yet. This page needs to know what
-        gets used each month — either <strong>record some sales</strong>, or import a spreadsheet
-        with <strong>a column per month</strong> (headings like <code>Jan-26</code>,
-        <code>2026-01</code> or <code>01/2026</code> are all understood). Then every product shows
-        here with the month it runs out.</p>
-      <div class="table-more"><button class="btn btn-sm" id="planMore" hidden>Show more</button></div>
-    </div>
-  </section>
-
-  <!-- ───────────────────────── To buy ───────────────────────── -->
-  <section class="view" id="view-reorder">
-    <div class="toolbar">
-      <div class="toolbar-text">
-        <h2 class="view-title">Shopping list for the supplier</h2>
-        <p class="muted">Everything at or below its alert level, plus anything that has to be ordered now to
-          arrive in time. Quantities cover the wait for delivery and about
-          <strong id="coverDaysLabel">30</strong> days after that.</p>
-      </div>
-      <button class="btn" id="printOrder">Print / save as PDF</button>
-    </div>
-    <div class="card card-flush">
-      <div class="table-scroll">
-        <table class="table" id="reorderTable">
-          <thead>
-            <tr>
-              <th>Product</th>
-              <th>Supplier</th>
-              <th class="num">In stock</th>
-              <th class="num">On order</th>
-              <th class="num">Used per week</th>
-              <th>Order by</th>
-              <th class="num">Order this much</th>
-              <th class="num">Estimated cost</th>
-              <th class="col-actions"></th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-          <tfoot>
-            <tr><td colspan="7" class="num strong">Total</td><td class="num strong" id="reorderTotal"></td><td></td></tr>
-          </tfoot>
-        </table>
-      </div>
-      <p class="empty" id="reorderEmpty" hidden>Nothing to order right now — everything is above its alert level and still inside its lead time. 🎉</p>
-      <div class="table-more"><button class="btn btn-sm" id="reorderMore" hidden>Show more</button></div>
-    </div>
-  </section>
-
-  <!-- ───────────────────────── Orders ───────────────────────── -->
-  <section class="view" id="view-orders">
-    <div class="toolbar">
-      <div class="toolbar-text">
-        <h2 class="view-title">Purchase orders</h2>
-        <p class="muted">What's on order, when it's due, and what has actually turned up.
-          Stock still owed counts towards cover, so nothing gets ordered twice.</p>
-      </div>
-      <select id="orderFilter" class="input input-select" aria-label="Filter orders">
-        <option value="live">Open &amp; late</option>
-        <option value="all">All orders</option>
-        <option value="late">Late only</option>
-        <option value="done">Finished</option>
-      </select>
-      <button class="btn" id="ordersFromList">Build from buying list</button>
-      <button class="btn btn-primary" id="newOrder">+ New order</button>
-    </div>
-    <div class="stat-row" id="orderStatRow"></div>
-    <div id="orderList"></div>
-    <p class="empty" id="ordersEmpty" hidden>No orders yet. Use <strong>Build from buying list</strong>
-      to raise them straight from what's due, or <strong>+ New order</strong> to enter one by hand.</p>
-  </section>
-
-  <!-- ───────────────────────── Sales ───────────────────────── -->
-  <section class="view" id="view-sales">
-    <div class="stat-row" id="salesStatRow"></div>
-
-    <section class="card">
-      <div class="card-head">
-        <h2>Month by month</h2>
-        <div class="seg" id="historyRange" role="group" aria-label="How far back to look">
-          <button class="seg-btn" data-months="12">1 year</button>
-          <button class="seg-btn is-active" data-months="24">2 years</button>
-          <button class="seg-btn" data-months="36">3 years</button>
-          <button class="seg-btn" data-months="48">4 years</button>
-        </div>
-      </div>
-      <div class="chart-wrap viz-root" id="historyChart"></div>
-      <div class="table-scroll">
-        <table class="table" id="historyTable">
-          <thead><tr id="historyHead"></tr></thead>
-          <tbody></tbody>
-          <tfoot><tr id="historyFoot"></tr></tfoot>
-        </table>
-      </div>
-      <p class="empty" id="historyEmpty" hidden>No sales recorded yet — once sales are in, every month
-        shows up here with how it compares to the same month a year earlier.</p>
-      <div class="card-foot"><button class="btn btn-sm" id="exportHistoryCsv">Export these months (CSV)</button></div>
-    </section>
-
-    <div class="toolbar">
-      <input type="search" id="salesSearch" class="input" placeholder="Search sales by product or customer…" aria-label="Search sales">
-      <button class="btn btn-primary" data-open="sale">+ Record a sale</button>
-    </div>
-    <div class="card card-flush">
-      <div class="table-scroll">
-        <table class="table" id="salesTable">
-          <thead>
-            <tr>
-              <th>Date</th><th>Product</th><th class="num">Quantity</th>
-              <th>Customer</th><th class="num">Total</th><th class="col-actions"></th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-      <p class="empty" id="salesEmpty" hidden>No sales recorded yet.</p>
-      <div class="table-more"><button class="btn btn-sm" id="salesMore" hidden>Show more</button></div>
-    </div>
-  </section>
-
-  <!-- ───────────────────────── Settings ───────────────────────── -->
-  <section class="view" id="view-data">
-    <div class="grid-2">
-      <section class="card">
-        <div class="card-head"><h2>Shop settings</h2></div>
-        <div class="form-grid">
-          <label class="field"><span>Shop name</span>
-            <input class="input" id="setShopName" placeholder="My shop"></label>
-          <label class="field"><span>Currency symbol</span>
-            <input class="input" id="setCurrency" maxlength="3" placeholder="$"></label>
-          <label class="field"><span>Order enough to last (days)</span>
-            <input class="input" id="setCoverDays" type="number" min="1" max="365" step="1">
-            <small class="hint">Used to work out how much to buy on the “To buy” page.</small></label>
-          <label class="field"><span>Default lead time (days)</span>
-            <input class="input" id="setLeadTime" type="number" min="0" max="365" step="1">
-            <small class="hint">Used for products with no lead time of their own.</small></label>
-        </div>
-        <div class="card-foot"><button class="btn btn-primary" id="saveSettings">Save settings</button></div>
-      </section>
-
-      <section class="card">
-        <div class="card-head"><h2>Backup &amp; data</h2></div>
-        <p class="muted">Everything is saved in this browser only. Download a backup now and then, and keep it somewhere safe.</p>
-        <div class="btn-row">
-          <button class="btn btn-primary" id="exportJson">Download backup</button>
-          <button class="btn" id="importJson">Restore from backup</button>
-          <input type="file" id="importFile" accept="application/json,.json" hidden>
-        </div>
-        <div class="btn-row">
-          <button class="btn" id="exportProductsCsv">Products as spreadsheet (CSV)</button>
-          <button class="btn" id="exportSalesCsv">Sales as spreadsheet (CSV)</button>
-        </div>
-        <hr class="rule">
-        <div class="btn-row">
-          <button class="btn" id="loadDemo">Load demo data</button>
-          <button class="btn btn-danger" id="clearAll">Erase everything</button>
-        </div>
-        <p class="card-note" id="storageNote"></p>
-      </section>
-    </div>
-  </section>
-</main>
-
-<!-- ───────────────────────── Dialogs ───────────────────────── -->
-<dialog class="modal" id="productModal">
-  <form method="dialog" id="productForm">
-    <h2 class="modal-title" id="productModalTitle">New product</h2>
-    <input type="hidden" id="p_id">
-    <div class="form-grid">
-      <label class="field span-2"><span>Product name *</span>
-        <input class="input" id="p_name" required maxlength="80" placeholder="e.g. Olive oil 1L"></label>
-      <label class="field"><span>Code / barcode</span>
-        <input class="input" id="p_sku" maxlength="40" placeholder="optional"></label>
-      <label class="field"><span>Category</span>
-        <input class="input" id="p_category" list="categoryList" maxlength="40" placeholder="e.g. Groceries">
-        <datalist id="categoryList"></datalist></label>
-      <label class="field"><span>Country</span>
-        <select class="input input-select" id="p_country"></select>
-        <small class="hint">Stock is counted per market.</small></label>
-      <label class="field"><span>Supplier</span>
-        <input class="input" id="p_supplier" maxlength="60" placeholder="Who you buy it from"></label>
-      <label class="field"><span>Sold in</span>
-        <input class="input" id="p_unit" maxlength="16" placeholder="pieces, boxes, kg…"></label>
-      <label class="field"><span>How many in stock now *</span>
-        <input class="input" id="p_stock" type="number" min="0" step="1" required value="0"></label>
-      <label class="field"><span>Warn me when stock drops to</span>
-        <input class="input" id="p_reorderPoint" type="number" min="0" step="1" value="5">
-        <small class="hint">Your low-stock alert level.</small></label>
-      <label class="field"><span>Usual order size</span>
-        <input class="input" id="p_reorderQty" type="number" min="0" step="1" value="10">
-        <small class="hint">Smallest sensible amount to buy at once.</small></label>
-      <label class="field"><span>Lead time (days)</span>
-        <input class="input" id="p_leadTimeDays" type="number" min="0" step="1" value="0">
-        <small class="hint">How long this supplier takes to deliver.</small></label>
-      <label class="field"><span>Cost per unit</span>
-        <input class="input" id="p_cost" type="number" min="0" step="0.01" value="0"></label>
-      <label class="field"><span>Selling price per unit</span>
-        <input class="input" id="p_price" type="number" min="0" step="0.01" value="0"></label>
-    </div>
-    <label class="check" style="margin-top:14px"><input type="checkbox" id="p_discontinued">
-      <span>Discontinued — keep the record, but stop suggesting orders for it</span></label>
-    <p class="form-error" id="productError" hidden></p>
-    <div class="modal-foot">
-      <button class="btn btn-danger btn-ghost" type="button" id="deleteProduct" hidden>Delete</button>
-      <span class="spacer"></span>
-      <button class="btn" type="button" data-close>Cancel</button>
-      <button class="btn btn-primary" type="submit">Save product</button>
-    </div>
-  </form>
-</dialog>
-
-<dialog class="modal" id="saleModal">
-  <form method="dialog" id="saleForm">
-    <h2 class="modal-title">Record a sale</h2>
-    <div class="form-grid">
-      <label class="field span-2"><span>Product *</span>
-        <select class="input input-select" id="s_product" required></select></label>
-      <label class="field"><span>How many *</span>
-        <input class="input" id="s_qty" type="number" min="1" step="1" value="1" required></label>
-      <label class="field"><span>Date</span>
-        <input class="input" id="s_date" type="date" required></label>
-      <label class="field"><span>Customer</span>
-        <input class="input" id="s_buyer" maxlength="60" placeholder="optional"></label>
-      <label class="field"><span>Price per unit</span>
-        <input class="input" id="s_price" type="number" min="0" step="0.01"></label>
-    </div>
-    <p class="form-note" id="saleNote"></p>
-    <p class="form-error" id="saleError" hidden></p>
-    <div class="modal-foot">
-      <span class="spacer"></span>
-      <button class="btn" type="button" data-close>Cancel</button>
-      <button class="btn btn-primary" type="submit">Save sale</button>
-    </div>
-  </form>
-</dialog>
-
-<dialog class="modal" id="restockModal">
-  <form method="dialog" id="restockForm">
-    <h2 class="modal-title">Add stock</h2>
-    <div class="form-grid">
-      <label class="field span-2"><span>Product *</span>
-        <select class="input input-select" id="r_product" required></select></label>
-      <label class="field"><span>How many arrived *</span>
-        <input class="input" id="r_qty" type="number" min="1" step="1" value="1" required></label>
-      <label class="field"><span>Date</span>
-        <input class="input" id="r_date" type="date" required></label>
-      <label class="field"><span>Cost per unit</span>
-        <input class="input" id="r_cost" type="number" min="0" step="0.01"></label>
-    </div>
-    <p class="form-note" id="restockNote"></p>
-    <div class="modal-foot">
-      <span class="spacer"></span>
-      <button class="btn" type="button" data-close>Cancel</button>
-      <button class="btn btn-primary" type="submit">Add to stock</button>
-    </div>
-  </form>
-</dialog>
-
-<dialog class="modal modal-lg" id="orderModal">
-  <form method="dialog" id="orderForm">
-    <h2 class="modal-title" id="orderModalTitle">New purchase order</h2>
-    <input type="hidden" id="o_id">
-    <div class="form-grid">
-      <label class="field"><span>Supplier</span>
-        <input class="input" id="o_supplier" list="supplierList" maxlength="60" placeholder="Who it's going to">
-        <datalist id="supplierList"></datalist></label>
-      <label class="field"><span>Your reference</span>
-        <input class="input" id="o_ref" maxlength="40" placeholder="PO number, optional"></label>
-      <label class="field"><span>Ordered on</span>
-        <input class="input" id="o_orderedOn" type="date" required></label>
-      <label class="field"><span>Expected</span>
-        <input class="input" id="o_expectedOn" type="date">
-        <small class="hint">Leave blank if the supplier hasn't said.</small></label>
-    </div>
-
-    <div class="order-lines" id="orderLines"></div>
-    <div class="btn-row">
-      <button class="btn btn-sm" type="button" id="addOrderLine">+ Add a product</button>
-      <span class="spacer"></span>
-      <span class="order-total">Order total <strong id="orderFormTotal">—</strong></span>
-    </div>
-
-    <label class="field span-2" style="margin-top:14px"><span>Notes</span>
-      <input class="input" id="o_notes" maxlength="200" placeholder="Anything worth remembering"></label>
-
-    <p class="form-error" id="orderError" hidden></p>
-    <div class="modal-foot">
-      <button class="btn btn-ghost" type="button" id="cancelOrder" hidden>Cancel this order</button>
-      <span class="spacer"></span>
-      <button class="btn" type="button" data-close>Close</button>
-      <button class="btn btn-primary" type="submit">Save order</button>
-    </div>
-  </form>
-</dialog>
-
-<dialog class="modal modal-lg" id="receiveModal">
-  <form method="dialog" id="receiveForm">
-    <h2 class="modal-title">Book in a delivery</h2>
-    <p class="muted" id="receiveHead"></p>
-    <div class="form-grid">
-      <label class="field"><span>Arrived on</span>
-        <input class="input" id="rc_date" type="date" required></label>
-      <label class="field"><span>Delivery note</span>
-        <input class="input" id="rc_note" maxlength="60" placeholder="optional"></label>
-    </div>
-    <div class="receive-lines" id="receiveLines"></div>
-    <label class="check" style="margin-top:14px"><input type="checkbox" id="rc_closeShort">
-      <span>Nothing more is coming — close the rest of this order short</span></label>
-    <p class="form-error" id="receiveError" hidden></p>
-    <div class="modal-foot">
-      <button class="btn btn-sm" type="button" id="receiveAll">Fill in everything outstanding</button>
-      <span class="spacer"></span>
-      <button class="btn" type="button" data-close>Cancel</button>
-      <button class="btn btn-primary" type="submit">Book it in</button>
-    </div>
-  </form>
-</dialog>
-
-<dialog class="modal modal-lg" id="importModal">
-  <form method="dialog" id="importForm">
-    <h2 class="modal-title">Import products from a spreadsheet</h2>
-    <p class="muted">In Excel, select your rows <em>including the header row</em>, copy them, then click the box
-      below and paste. A saved <code>.csv</code> file works too.</p>
-
-    <div class="btn-row">
-      <button class="btn" type="button" id="importPickFile">Choose a CSV file…</button>
-      <input type="file" id="importCsvFile" accept=".csv,.tsv,.txt,text/csv" hidden>
-    </div>
-
-    <label class="field span-2"><span>Or paste here</span>
-      <textarea class="input" id="importPaste" rows="5"
-        placeholder="Code&#9;Product&#9;Category&#9;In stock&#9;Cost&#9;Price"></textarea></label>
-
-    <div id="importPreview"></div>
-    <p class="form-error" id="importError" hidden></p>
-
-    <div class="modal-foot">
-      <label class="check"><input type="checkbox" id="importUpdate" checked>
-        <span>Update products that already exist</span></label>
-      <span class="spacer"></span>
-      <button class="btn" type="button" data-close>Cancel</button>
-      <button class="btn btn-primary" type="submit" id="importGo" disabled>Import</button>
-    </div>
-  </form>
-</dialog>
-
-<dialog class="modal modal-sm" id="confirmModal">
-  <form method="dialog">
-    <h2 class="modal-title" id="confirmTitle">Are you sure?</h2>
-    <p id="confirmBody" class="muted"></p>
-    <div class="modal-foot">
-      <span class="spacer"></span>
-      <button class="btn" type="button" data-close>Cancel</button>
-      <button class="btn btn-danger" type="submit" id="confirmOk">Yes, do it</button>
-    </div>
-  </form>
-</dialog>
-
-<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
-
-<!-- Printable purchase order (hidden on screen) -->
-<div id="printArea" aria-hidden="true"></div>
-
-<script src="app.js"></script>
+<script src="vr.js"></script>
+<script src="game.js"></script>
 </body>
 </html>
