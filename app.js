@@ -22,6 +22,8 @@
     sens: 1.0,      // how readily it calls something a person
     erase: 1.0,     // how completely they go
     hide: 'always', // 'always' — invisible wherever they stand; 'gaze' — only what you look at
+    view: 'blocks', // 'blocks' — the scanned room rebuilt as cubes; 'camera' — live passthrough
+    grid: 20,       // cubes across the room
     stereo: true
   };
   var S = Object.assign({}, DEF);
@@ -46,7 +48,6 @@
   var scanStart = 0;
   var hudCv, hudCtx, hudAt = 0;
   var people = [];              // the demo room's simulated people
-  var primeLeft = 0;
   var lit = 0, stale = 0, trust = 1;
 
   function litFraction(buf) {
@@ -343,7 +344,8 @@
       } else {
         c.fillStyle = '#93a7bb';
         c.font = '500 24px ui-sans-serif, system-ui, sans-serif';
-        c.fillText(S.hide === 'always' ? 'people are invisible' : 'look away to hide them', W / 2, 40);
+        c.fillText(S.view === 'blocks' ? 'the room, rebuilt in blocks'
+          : (S.hide === 'always' ? 'people are invisible' : 'look away to hide them'), W / 2, 40);
       }
     }
     VR.uploadHud(hudCv);
@@ -368,7 +370,8 @@
     VR.resize();
     R = computeR();
 
-    var scanning = (mode === 'scan' || primeLeft > 0);
+    var scanning = (mode === 'scan');
+    var blocks = S.view === 'blocks';
 
     if (simMode) {
       stepPeople(scanning ? 0 : dt, t);
@@ -381,8 +384,13 @@
       smooth: scanning ? 0.5 : 0.35,
       /* A stale plate is repainted briskly; a good one drifts slowly so a
          person standing still does not fade into the wallpaper. */
-      slow: scanning ? 0.16 : (stale > 1.5 ? 0.14 : 0.018),
-      fast: 0.55
+      /* Building the room out of blocks is something to watch, so a direction
+         seen for the first time arrives over about half a second of dwelling
+         rather than in three frames — and at one steady rate, so a half-built
+         wall is halfway to its colour rather than confidently wrong. The camera
+         view has nothing to watch, so it takes the plate as fast as it can. */
+      slow: scanning ? (blocks ? 0.05 : 0.16) : (stale > 1.5 ? 0.14 : 0.018),
+      fast: blocks ? 0.14 : 0.55
     });
 
     if (frame % 12 === 0) coverage = VR.coverage();
@@ -413,7 +421,6 @@
         : (now - scanStart > 9000 ? 'keep turning — some angles are still dark' : '');
       $('#btnDone').classList.toggle('primary', ang >= ANGLE_DONE);
     }
-    if (primeLeft > 0) primeLeft -= dt;
 
     fade += ((mode === 'idle' ? 0.55 : 1) - fade) * Math.min(1, dt * 4);
 
@@ -433,8 +440,12 @@
       always: (mode === 'scan' || S.hide !== 'always') ? 0 : 1,
       gazeIn: GAZE_IN, gazeOut: gazeOut(),
       time: t, fade: fade,
-      reticle: mode === 'live' ? 1 : 0,
+      /* The cone only means something when the camera is the thing being
+         hidden; among blocks there is nothing live to erase. */
+      reticle: (!blocks && mode === 'live') ? 1 : 0,
       hud: mode !== 'idle',
+      blocks: blocks,
+      cell: 2.0 / S.grid,
       marks: marks
     });
 
@@ -449,36 +460,16 @@
 
   /* ---------- phases ---------- */
 
+  /* The demo used to be given a half-built plate so it had something to show
+     straight away. Watching the room assemble itself is now the thing worth
+     showing, so it starts as blank as a real camera does. */
   function startScan() {
     mode = 'scan';
     scanStart = performance.now();
     VR.forget();
     tracks = [];
+    coverage = 0;
     document.body.dataset.phase = 'scan';
-    if (simMode) {
-      /* Sweep the demo room so the plate is built the same way a real one is. */
-      primeSweep();
-    }
-  }
-
-  /* Give the demo room a head start, but deliberately not a complete one: the
-     compass is left with gaps so that pressing Done is a real decision, the
-     way it is with a real camera. */
-  function primeSweep() {
-    var steps = 110, i = 0;
-    primeLeft = 0.1;
-    (function step() {
-      if (i >= steps) { primeLeft = 0; return; }
-      var f = i / steps;
-      yaw = f * Math.PI * 1.25;
-      pitch = Math.sin(f * Math.PI * 3) * 0.5;
-      var Rp = VR.matFromYawPitch(yaw, pitch);
-      VR.renderSim(Rp, 0, people, false);
-      VR.sense(Rp, { t0: 0.06, t1: 0.2, smooth: 0.5, slow: 0.35, fast: 0.7 });
-      i++;
-      if (i % 25 === 0) { coverage = VR.coverage(); setTimeout(step, 0); } else step();
-    }());
-    coverage = VR.coverage();
   }
 
   function startLive() {
@@ -664,6 +655,8 @@
     opt('#optRot', 'rot', Number);
     opt('#optLens', 'lens', String);
     opt('#optIpd', 'ipd', Number);
+    opt('#optView', 'view', String);
+    opt('#optGrid', 'grid', Number);
     opt('#optSens', 'sens', Number);
     opt('#optHide', 'hide', String);
     opt('#optErase', 'erase', Number);
@@ -699,7 +692,7 @@
       state: function () {
         return {
           mode: mode, sim: simMode, coverage: coverage, lit: lit, trust: trust, stale: stale,
-          gazeOut: gazeOut(),
+          view: S.view, grid: S.grid, gazeOut: gazeOut(),
           people: people.map(function (p) { return { yaw: p.yaw, pitch: p.pitch, size: p.size }; }),
           tracks: tracks.map(function (t) {
             return { id: t.id, u: t.u, v: t.v, dir: t.dir, area: t.area, age: t.age };

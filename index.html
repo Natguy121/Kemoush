@@ -20,8 +20,8 @@
 <section id="gate" class="screen">
   <div class="card">
     <h1>KEMOSH</h1>
-    <p class="tag">Scan the empty room, press Done, and from then on the people in it
-      are invisible.</p>
+    <p class="tag">Start in a white void. Look around, and the room builds itself
+      back up around you out of blocks.</p>
 
     <div class="row">
       <button id="btnCam" class="primary">Use the camera</button>
@@ -32,19 +32,36 @@
     <button id="btnHow" class="link">How it works</button>
     <div id="how" class="how" hidden>
       <ol>
+        <li><b>You start in white.</b> Nothing is known yet, so there is nothing to
+          draw.</li>
         <li><b>Scan every angle.</b> Turn all the way round on the spot with nobody in
-          front of you. A compass shows which directions are still dark. When it&rsquo;s
-          filled in, press <b>Done</b>.</li>
-        <li><b>Now people are invisible.</b> Anyone who walks in front of you simply
-          isn&rsquo;t drawn &mdash; you see the room behind them, wherever in view
-          they are.</li>
+          front of you. Wherever you look, the room fills in as stacked cubes &mdash;
+          colour, shading and relief arriving together. A compass shows which directions
+          are still blank. When it&rsquo;s filled in, press <b>Done</b>.</li>
+        <li><b>What you end up in is your room, rebuilt.</b> Not the camera picture
+          &mdash; a blocky model of it. Anyone who walks in is simply not part of that
+          model, so they never appear.</li>
       </ol>
-      <p class="fine">One camera means both eyes see the same picture. It sits right for
-        turning your head, but it is not true depth.</p>
+      <p class="fine">The blocks are placed on a guessed room-shaped box, because one
+        camera cannot measure depth. <i>Settings &rarr; Show &rarr; the camera</i>
+        switches back to the plain passthrough view.</p>
     </div>
 
     <details class="opts">
       <summary>Settings</summary>
+      <label><span>Show</span>
+        <select id="optView">
+          <option value="blocks">the room as blocks</option>
+          <option value="camera">the camera</option>
+        </select>
+      </label>
+      <label><span>Block size</span>
+        <select id="optGrid">
+          <option value="12">big</option>
+          <option value="20">medium</option>
+          <option value="30">small</option>
+        </select>
+      </label>
       <label><span>Stereo (Cardboard)</span><input id="optStereo" type="checkbox"></label>
       <label><span>Lens correction</span>
         <select id="optLens"><option value="off">off</option><option value="light">light</option><option value="strong">strong</option></select>
@@ -63,8 +80,8 @@
       </label>
       <label><span>How completely</span><input id="optErase" type="range" min="0" max="1" step="0.05"><output data-for="optErase"></output></label>
       <p class="fine">If the view looks rotated or squashed, it is <i>Camera turned</i> and
-        <i>Camera width</i> that fix it. If nobody ever vanishes, raise <i>Spot people</i>
-        and rescan.</p>
+        <i>Camera width</i> that fix it. <i>Hide people</i> and <i>How completely</i> only
+        apply to the camera view &mdash; among blocks nothing live is drawn at all.</p>
     </details>
   </div>
 </section>

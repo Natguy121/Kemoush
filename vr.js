@@ -134,7 +134,12 @@
     '  float edge = 1.0 - smoothstep(0.78, 1.0, max(abs(ms.x), abs(ms.y)));',
     '  float rate = mix(uSlow, uFast, 1.0 - prev.a) * edge * (1.0 - m);',
     '  o.rgb = mix(prev.rgb, c, rate);',
-    '  o.a = min(1.0, prev.a + rate*0.8);',
+    /* Confidence has to converge on exactly the same curve the colour does.
+       Adding a fixed step per frame instead let alpha reach "certain" while the
+       colour was still half way there — which showed up as the room building
+       up darker than it finally settles. Read it as: how much of what is really
+       there has made it into this texel. */
+    '  o.a = 1.0 - (1.0 - prev.a) * (1.0 - rate);',
     '}'
   ].join('\n');
 
@@ -164,7 +169,12 @@
     '  float dc = length((c-lc) - (b.rgb-lb));',
     '  float diff = max(dl*0.85, dc*1.7);',
     '  float m = smoothstep(uT0, uT1, diff);',
-    '  m *= smoothstep(0.22, 0.65, b.a);',
+    /* Nothing can be called a person until the wall behind them is actually
+       known. A plate only part of the way to the truth disagrees with the
+       camera everywhere, and taking that for a person would stop the paint
+       pass filling it in — the fill would stall half done, waiting on a plate
+       that is waiting on the fill. */
+    '  m *= smoothstep(0.55, 0.92, b.a);',
     '  bool inFrame = cuv.x > 0.001 && cuv.x < 0.999 && cuv.y > 0.001 && cuv.y < 0.999;',
     '  if (!inFrame) m = 0.0;',
     '  float prev = texture(uPrev, vUv).r;',
@@ -222,10 +232,117 @@
     'uniform mat2 uCamM;',
     'uniform vec2 uMaskTan, uEyeTan, uLens;',
     'uniform float uK1, uK2, uErase, uGazeIn, uGazeOut, uTime, uShake, uFade, uAlways;',
-    'uniform float uReticle, uHudOn;',
+    'uniform float uReticle, uHudOn, uBlocks, uCell;',
     /* Each tracked person: direction in xyz, their own erase radius in w. */
     'uniform vec4 uMarks[8];',
     'uniform int uMarkN;',
+
+    /* ---------- the room, rebuilt out of cubes ----------
+       There is no depth in a single camera, so the room is taken to be a box
+       with the viewer standing in the middle of it. That is a guess, but it is
+       the right guess for a room, and it is the corners it produces — two walls
+       and a floor meeting — that make the result read as a solid place rather
+       than as wallpaper.
+
+       The saving grace of a headset is that the viewer only ever turns, never
+       walks. So the whole block world is a function of direction alone, and a
+       ray need not be marched from the eye: it can start just short of the wall
+       and walk a handful of cells. That is what keeps this affordable on a
+       phone. */
+    'const vec3 RMIN = vec3(-1.0,-1.0,-0.62);',
+    'const vec3 RMAX = vec3( 1.0, 1.0, 0.42);',
+
+    /* A fixed shade per facing rather than a lamp somewhere. Indoors, a lamp
+       leaves whole walls in the dark; a flat value per axis keeps every face
+       readable and still tells the three directions apart at a glance, which is
+       what makes a heap of cubes look like cubes. */
+    'float faceShade(vec3 n){',
+    '  if (n.z > 0.5) return 1.0;',
+    '  if (n.z < -0.5) return 0.68;',
+    '  return abs(n.x) > 0.5 ? 0.93 : 0.80;',
+    '}',
+
+    /* Fewer, flatter tones — but taken out of brightness alone, so a beige wall
+       stays beige. Rounding the three channels separately drags near-greys off
+       towards red or olive, which looked like a fault in the camera. */
+    'vec3 blocky(vec3 c){',
+    '  float l = max(dot(c, vec3(0.299,0.587,0.114)), 1e-3);',
+    '  return c * (floor(l * 11.0 + 0.5) / 11.0) / l;',
+    '}',
+
+    /* How far the box wall is, along d. */
+    'float roomDist(vec3 d){',
+    '  vec3 sd = max(abs(d), vec3(1e-5)) * (step(vec3(0.0), d)*2.0 - 1.0);',
+    '  vec3 s = mix(RMIN, RMAX, step(vec3(0.0), d));',
+    '  vec3 tv = s / sd;',
+    '  return min(tv.x, min(tv.y, tv.z));',
+    '}',
+
+    /* How many cells this column of the room stands proud of the flat wall.
+       Whole numbers only — a smooth height would give a lumpy surface, and
+       stacked cubes are the entire point. Unscanned columns stand at zero, so
+       the room starts out a flat white box and gains its relief as it is
+       learned. */
+    'float cellPull(vec4 pl){',
+    '  float a = smoothstep(0.05, 0.55, pl.a);',
+    '  float l = dot(pl.rgb, vec3(0.299,0.587,0.114));',
+    '  return floor(clamp((l - 0.16) * 2.0, 0.0, 1.0) * a * 2.999);',
+    '}',
+
+    'vec3 blockRoom(vec3 d){',
+    '  float cs = uCell;',
+    '  float wall = roomDist(d);',
+    /* Start three cells short of the wall: nothing can stand proud of it by
+       more than that, and never nearer than a third of the way in, so the cell
+       centres stay well away from the origin where normalize() would give up. */
+    '  float t0 = max(wall * 0.38, wall - 3.0*cs);',
+    '  ivec3 c = ivec3(floor(d * t0 / cs));',
+    '  bvec3 tiny = lessThan(abs(d), vec3(1e-5));',
+    '  vec3 dsf = mix(d, vec3(1.0), vec3(tiny));',
+    '  vec3 sgn = step(vec3(0.0), d)*2.0 - 1.0;',
+    '  vec3 tMax = mix((vec3(c) + step(vec3(0.0), d)) * cs / dsf, vec3(1e9), vec3(tiny));',
+    '  vec3 tDelta = mix(cs / abs(dsf), vec3(1e9), vec3(tiny));',
+    '  vec4 pl = vec4(0.0);',
+    '  bool found = false;',
+    /* Walk the lattice. A cell is solid once it lies at or beyond its own
+       column's surface, so corners and the join between walls come out right
+       without any special case. */
+    '  for (int i = 0; i < 12; i++) {',
+    '    vec3 centre = (vec3(c) + 0.5) * cs;',
+    '    vec3 cdir = normalize(centre);',
+    '    pl = texture(uPano, panoFromDir(cdir));',
+    '    float rd = roomDist(cdir);',
+    '    if (length(centre) >= max(rd - cellPull(pl)*cs, rd*0.4)) { found = true; break; }',
+    '    if (tMax.x < tMax.y && tMax.x < tMax.z) { c.x += int(sgn.x); tMax.x += tDelta.x; }',
+    '    else if (tMax.y < tMax.z) { c.y += int(sgn.y); tMax.y += tDelta.y; }',
+    '    else { c.z += int(sgn.z); tMax.z += tDelta.z; }',
+    '  }',
+    '  if (!found) pl = texture(uPano, panoFromDir(normalize((vec3(c) + 0.5) * cs)));',
+    /* Which face of that cube the ray came in through — the flat shading this
+       gives is most of what says "cube" to the eye. */
+    '  vec3 cmin = vec3(c) * cs;',
+    '  vec3 tin = min(cmin / dsf, (cmin + cs) / dsf);',
+    '  vec3 n = vec3(0.0);',
+    '  if (tin.x >= tin.y && tin.x >= tin.z) n.x = -sgn.x;',
+    '  else if (tin.y >= tin.z) n.y = -sgn.y;',
+    '  else n.z = -sgn.z;',
+    '  vec3 hp = d * max(max(tin.x, max(tin.y, tin.z)), 1e-4);',
+    '  vec3 e = min(fract(hp / cs), 1.0 - fract(hp / cs));',
+    '  vec3 w = abs(n);',
+    '  float ed = min(min(mix(e.x,1.0,w.x), mix(e.y,1.0,w.y)), mix(e.z,1.0,w.z));',
+    '  float seam = smoothstep(0.0, 0.05, ed);',
+    /* How much of this column is actually known yet. */
+    '  float conf = smoothstep(0.03, 0.8, pl.a);',
+    /* The colour needs no fade of its own: the plate starts white and walks to
+       the truth. A gentle lift, because a room read back off a phone camera is
+       dimmer than the room was and cube shading takes another bite out of it. */
+    '  vec3 albedo = pow(blocky(pl.rgb), vec3(0.78));',
+    /* Shading, seams and relief are the part that has to be held back — they
+       would be inventing structure for a wall nothing is known about yet. */
+    '  float lam = mix(1.0, faceShade(n), conf);',
+    '  return albedo * lam * (1.0 - mix(0.04, 0.26, conf) * (1.0 - seam));',
+    '}',
+
     'void main(){',
     '  vec2 p = (vUv*2.0-1.0) - uLens;',
     '  float r2 = dot(p,p);',
@@ -235,49 +352,57 @@
     '  vec2 t = pd * uEyeTan;',
     '  vec3 ds = normalize(vec3(t, -1.0));',
     '  vec3 d = uR * ds;',
-    '  vec4 plate = texture(uPano, panoFromDir(d));',
-    '  vec2 cuv = (uCamM * t) * 0.5 + 0.5;',
-    '  bool inCam = cuv.x > 0.0 && cuv.x < 1.0 && cuv.y > 0.0 && cuv.y < 1.0;',
-    '  vec3 live = texture(uCam, cuv).rgb;',
-    '  vec3 empty = mix(vec3(0.015,0.016,0.02), plate.rgb, plate.a);',
-    '  vec3 base = inCam ? live : empty;',
-    '  vec2 ms = (t / uMaskTan)*0.5+0.5;',
-    '  float m = (ms.x>0.0&&ms.x<1.0&&ms.y>0.0&&ms.y<1.0) ? texture(uMask, ms).r : 0.0;',
+    '  float ang = length(t);',
+    '  vec3 col;',
+    '  if (uBlocks > 0.5) {',
+    /* Nothing live is drawn at all here: the room comes from what was scanned,
+       so anyone standing in it is absent by construction rather than by being
+       painted over. */
+    '    col = blockRoom(d);',
+    '  } else {',
+    '    vec4 plate = texture(uPano, panoFromDir(d));',
+    '    vec2 cuv = (uCamM * t) * 0.5 + 0.5;',
+    '    bool inCam = cuv.x > 0.0 && cuv.x < 1.0 && cuv.y > 0.0 && cuv.y < 1.0;',
+    '    vec3 live = texture(uCam, cuv).rgb;',
+    '    vec3 empty = mix(vec3(0.015,0.016,0.02), plate.rgb, plate.a);',
+    '    vec3 base = inCam ? live : empty;',
+    '    vec2 ms = (t / uMaskTan)*0.5+0.5;',
+    '    float m = (ms.x>0.0&&ms.x<1.0&&ms.y>0.0&&ms.y<1.0) ? texture(uMask, ms).r : 0.0;',
     /* Firm the mask up: solid through the body, feathered only at the outline,
        or the silhouette survives as a dark outline of itself. */
-    '  m = smoothstep(0.10, 0.45, m);',
-    '  float ang = length(t);',
+    '    m = smoothstep(0.10, 0.45, m);',
     /* Where a tracked person's own silhouette reaches. Gate on the person's
        position, not this pixel's, or looking near someone punches a hole in
        them instead of taking the whole body. The reach is that person's own
        size, in uMarks[i].w, so someone standing beside them keeps their own
        fate rather than being taken along too. */
-    '  float whole = 0.0;',
-    '  for (int i=0; i<8; i++){',
-    '    if (i >= uMarkN) break;',
-    '    vec3 md = uRinv * uMarks[i].xyz;',
-    '    if (md.z > -0.08) continue;',
-    '    vec2 mt = md.xy / -md.z;',
-    '    if (length(t - mt) < uMarks[i].w) {',
-    '      whole = max(whole, 1.0 - smoothstep(uGazeOut*0.55, uGazeOut, length(mt)));',
+    '    float whole = 0.0;',
+    '    for (int i=0; i<8; i++){',
+    '      if (i >= uMarkN) break;',
+    '      vec3 md = uRinv * uMarks[i].xyz;',
+    '      if (md.z > -0.08) continue;',
+    '      vec2 mt = md.xy / -md.z;',
+    '      if (length(t - mt) < uMarks[i].w) {',
+    '        whole = max(whole, 1.0 - smoothstep(uGazeOut*0.55, uGazeOut, length(mt)));',
+    '      }',
     '    }',
-    '  }',
     /* uAlways is the whole point of the scan: once the room is known, people are
        simply not drawn, wherever they stand. Dropped to zero it reverts to
        hiding only what you look at. Anything the tracker has not caught up with
        still fades where you stare, so the effect never waits on it. */
-    '  float gaze = max(uAlways, max(whole, 1.0 - smoothstep(uGazeIn, uGazeOut, ang)));',
-    '  float erase = clamp(m * gaze * uErase, 0.0, 1.0);',
+    '    float gaze = max(uAlways, max(whole, 1.0 - smoothstep(uGazeIn, uGazeOut, ang)));',
+    '    float erase = clamp(m * gaze * uErase, 0.0, 1.0);',
     /* Dissolve rather than cut: a hard swap between two images reads as a glitch,
        a noisy wipe reads as something being taken away. */
-    '  float n = hash21(floor(cuv*vec2(220.0,124.0)) + floor(uTime*14.0)*7.13);',
-    '  float e = clamp(erase*1.7 - n*0.45 - 0.05, 0.0, 1.0);',
-    '  e = smoothstep(0.0, 0.5, e);',
-    '  vec3 col = mix(base, empty, e);',
+    '    float nz = hash21(floor(cuv*vec2(220.0,124.0)) + floor(uTime*14.0)*7.13);',
+    '    float e = clamp(erase*1.7 - nz*0.45 - 0.05, 0.0, 1.0);',
+    '    e = smoothstep(0.0, 0.5, e);',
+    '    col = mix(base, empty, e);',
     /* A rim where the dissolve is half-done sells the unmaking when you turn to
        face someone. When they are meant to be simply absent it would give their
        position away, so it drops to a whisper. */
-    '  col += vec3(0.25,0.75,0.95) * e*(1.0-e) * mix(2.2, 0.3, uAlways) * m;',
+    '    col += vec3(0.25,0.75,0.95) * e*(1.0-e) * mix(2.2, 0.3, uAlways) * m;',
+    '  }',
     /* Centre mark: where looking becomes erasing, for the gaze-only mode. */
     '  float gr = smoothstep(0.005, 0.0, abs(ang - uGazeOut));',
     '  col += vec3(0.9,0.35,0.35) * gr * 0.16 * uReticle * (1.0 - uAlways);',
@@ -534,12 +659,15 @@
       updateCamGeom(fovDeg, vw, vh, simOn ? 0 : rot);
     },
 
-    /* Throw the plate away — used before a fresh scan. */
+    /* Throw the plate away — used before a fresh scan. Cleared to white with no
+       confidence, so an unscanned direction is literally blank paper: the block
+       view can hand the plate's own colour straight to the wall and get the
+       white-to-room fade for free, on exactly the curve the plate converges. */
     forget: function () {
       var i;
       for (i = 0; i < 2; i++) {
         target(fbo.pano[i], PANO_W, PANO_H);
-        gl.clearColor(0.05, 0.05, 0.06, 0.0);
+        gl.clearColor(1.0, 1.0, 1.0, 0.0);
         gl.clear(gl.COLOR_BUFFER_BIT);
         target(fbo.mask[i], MASK_W, MASK_H);
         gl.clearColor(0, 0, 0, 1);
@@ -667,6 +795,9 @@
       gl.uniform1f(prog.view.u.uFade, o.fade == null ? 1 : o.fade);
       gl.uniform1f(prog.view.u.uReticle, o.reticle == null ? 1 : o.reticle);
       gl.uniform1f(prog.view.u.uHudOn, o.hud ? 1 : 0);
+      gl.uniform1f(prog.view.u.uBlocks, o.blocks ? 1 : 0);
+      /* Cube edge, in units of the room box — which spans -1..1 across. */
+      gl.uniform1f(prog.view.u.uCell, o.cell || 0.1);
       gl.uniform4fv(prog.view.u.uMarks, arr);
       gl.uniform1i(prog.view.u.uMarkN, n);
       for (i = 0; i < eyes; i++) {

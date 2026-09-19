@@ -1,9 +1,12 @@
 # KEMOSH
 
-A camera passthrough tool for a phone and a cardboard headset. You scan the
-empty room from every angle, press **Done**, and from that moment **the people
-in it are invisible**. Someone walks in front of you and you see the wall
-behind them.
+For a phone and a cardboard headset. You start in **a white void**. As you look
+around, the room **builds itself back up around you out of blocks** — not the
+camera picture, a blocky model of the place you are standing in, assembled from
+what you have scanned so far.
+
+Because what you end up in is a model of the empty room, **anyone who walks into
+it is simply not part of it**. They never appear at all.
 
 ## Getting it onto a phone
 
@@ -22,46 +25,86 @@ headset. It goes fullscreen and locks to landscape on its own.
 No camera handy, or trying it on a laptop? **Try the room instead** builds a
 room out of arithmetic and puts a couple of simulated people in it, so the whole
 effect is visible without a camera. Drag with the mouse, or use the arrow keys,
-to look around. Everything else behaves identically — it runs through the same
-pipeline as the real camera.
+to look around. It starts blank exactly as the camera does, and runs through the
+same pipeline — so you scan it the same way.
 
 ## How to use it
 
-1. **Scan every angle.** Turn all the way round on the spot, with nobody in front
-   of you, while the phone learns the empty room. A compass along the bottom of
-   the view shows which directions are still dark — turn until they are all lit.
-   Nothing is on a timer; it waits for you.
-2. **Press Done.** The scan ends when you say so, not when a clock runs out.
-   Inside the headset, a double-tap on the case does the same thing.
-3. **From then on, people are invisible.** Anyone who walks in front of you
-   simply isn't drawn — you see the room behind them, wherever in view they are.
+1. **You start in white.** Nothing has been seen yet, so there is nothing to
+   draw: a blank white space with the faintest hint of cube seams.
+2. **Scan every angle.** Turn all the way round on the spot, with nobody in front
+   of you. Wherever you look, that part of the room arrives over about half a
+   second — colour, shading and relief together — and stays. A compass along the
+   bottom of the view shows which directions are still blank. Nothing is on a
+   timer; it waits for you.
+3. **Press Done.** The scan ends when you say so. Inside the headset, a
+   double-tap on the case does the same thing.
+4. **You are now standing in a blocky model of your room.** Anyone who walks in
+   is not in that model, so they never appear.
 
 That's the whole thing. There's no score, no timer, nothing to win — it's a way
 of seeing, not a game.
 
-## How the erasing works
+## How it works
 
 The trick is a **world-locked plate**. During the scan the phone paints what the
 camera sees onto a sphere that stays put while your head turns — so at any moment
 it can say what the room looked like when nobody was in it, in the exact
 direction you happen to be facing.
 
-Compare that plate against the live frame and what's left over is whatever the
+The plate starts out **white with no confidence**, and every direction walks from
+white to the truth on one curve as it is scanned. That curve is the build-up you
+watch: an unscanned wall is blank paper, a half-scanned one is halfway there.
+
+### Turning that into blocks
+
+One camera cannot measure depth, so the room is **taken to be a box with you
+standing in the middle of it**. That is a guess, but it is the right guess for a
+room, and it is the corners it produces — two walls and a floor meeting — that
+make the result read as a place rather than as wallpaper.
+
+Space is then cut into a lattice of cubes. For each direction you look, a ray
+walks that lattice until it meets a solid cube, and the cube's face is shaded by
+which way it points: floor-side faces brightest, ceiling-side darkest, the two
+wall directions in between. That flat per-face shading is most of what says
+"cube" to the eye.
+
+Cubes don't all sit flush with the wall. Each column stands proud of it by a
+whole number of cubes, taken from how bright that part of the room is — so
+what's in the room comes out as relief stacked on the walls rather than as a
+picture painted on them.
+
+Two things keep this cheap enough for a phone. A headset viewer only ever turns,
+never walks, so the whole block world is a function of direction alone and a ray
+can start just short of the wall instead of at the eye — a handful of lattice
+steps, not hundreds. And the colours are quantised by **brightness only**, never
+per channel, because rounding red, green and blue separately drags a beige wall
+off towards olive or maroon, which looks like a fault in the camera.
+
+### Keeping people out of the model
+
+Compare the plate against the live frame and what's left over is whatever the
 room doesn't account for: a person. Brightness and colour are compared
 separately, because a phone's auto-exposure shifts the whole frame at once and
-colour survives that better than brightness does.
+colour survives that better than brightness does. Those pixels are then refused
+entry to the plate, so nobody gets painted into the room.
 
-Then the leftover is shaped into people — connected blobs, filtered by how tall,
-wide and solid they are — and tracked from frame to frame so each one keeps an
-identity while it moves. **Every pixel of a tracked person** is then drawn from
-the plate instead of from the camera. Not a hole cut through them: the whole
-silhouette.
+Nothing is called a person until the wall behind them is actually known — a
+plate only part of the way to the truth disagrees with the camera everywhere,
+and mistaking that for a person would stop the scan filling it in at all.
 
-That is what pressing Done switches on. Before it, nothing is erased — the phone
-is still learning and would only be guessing. After it, people are gone wherever
-they stand. *Settings → Hide people → only where I look* puts the erasing back on
-a leash, so they fade only as you turn towards them, and reappear again when you
-look away.
+Since the block view draws the model and never the live frame, that is all it
+takes: people are absent by construction rather than painted over.
+
+### The camera view
+
+*Settings → Show → the camera* gives the plain passthrough instead: the live
+frame, with people cut out of it. There the leftovers are shaped into people —
+connected blobs, filtered by how tall, wide and solid they are, tracked from
+frame to frame — and **every pixel of a tracked person** is drawn from the plate
+instead of from the camera. Not a hole cut through them: the whole silhouette.
+*Hide people → only where I look* puts that on a leash, so they fade only as you
+turn towards them and come back when you look away.
 
 Nothing is downloaded, no model runs, and no picture leaves the phone. It is
 arithmetic on the frame in front of you.
@@ -70,20 +113,23 @@ arithmetic on the frame in front of you.
 
 Worth knowing before it surprises you:
 
+- **The blocks are on a guessed box, not measured depth.** A chair in the middle
+  of the floor does not become a lump in the middle of the floor; it lands on the
+  wall behind it, as relief. The shape you stand in is a room-shaped box every
+  time, whatever shape your room really is.
 - **One camera means one picture.** Both eyes get the same view. It tracks your
   head correctly when you turn, but there is no real depth — near things don't
   sit nearer. It is comfortable enough; it isn't true stereo.
 - **Turning is fine, walking is not.** The plate assumes your head rotates about
   roughly one point. Take three steps and everything shifts against it, the room
-  stops matching, and it knows: erasing switches off and the plate relearns,
+  stops matching, and it knows: it stops trusting the difference and repaints,
   which you'll see as *the room changed — relearning it*.
-- **Anyone standing still during the scan gets painted into the plate**, and then
-  the room thinks they're furniture — they stay visible. This is why the scan
-  asks for an empty room and why Done is yours to press: don't press it until
-  everyone is out of shot. They'll fade back in once they move; *Rescan* fixes it
-  outright.
+- **Anyone standing still during the scan gets built into the room**, and then it
+  thinks they're furniture. This is why the scan asks for an empty room and why
+  Done is yours to press: don't press it until everyone is out of shot. They'll
+  fade out once they move; *Rescan* fixes it outright.
 - **A blank white wall gives it nothing to work with.** Rooms with texture in
-  them work better.
+  them work better, and come out with more relief.
 
 ## If it looks wrong
 
@@ -91,25 +137,28 @@ Everything below is in **Settings** on the start screen.
 
 | What you see | What to change |
 |---|---|
+| The room stays white | Keep turning — and check **Camera turned** below |
+| Cubes too coarse, or too fine to read | **Block size** |
+| You want the real picture instead | **Show** → *the camera* |
 | The view is sideways, or squashed | **Camera turned** — try 90°, then 270° |
 | Straight lines bow, or the edges are blurry | **Lens correction**, and **Eye spacing** |
 | The two halves don't merge into one image | **Eye spacing** |
-| Nobody ever vanishes | Raise **Spot people**, then *rescan* |
-| Things vanish that aren't people | Lower **Spot people** |
-| People only fade when you face them | **Hide people** → *wherever they are* |
-| You want the camera plain, with no erasing | **How completely** down to 0 |
 | Not using a headset | Turn **Stereo** off for a single full-screen view |
 
-If the whole view starts dissolving at once, that's the safety valve saying the
-plate no longer matches the room. It stops erasing by itself and repaints. Press
-*rescan* to do it deliberately.
+The last three settings — **Spot people**, **Hide people** and **How completely**
+— only do anything in the camera view. Among blocks nothing live is drawn at all,
+so there is nothing to hide.
+
+If the picture starts coming apart, that's the safety valve saying the plate no
+longer matches the room. It stops trusting it and repaints. Press *rescan* to do
+it deliberately.
 
 ## The files
 
 ```
 index.html   the page, the start screen, the settings
 styles.css   the look
-vr.js        the renderer — plate, mask, stereo, lens, everything on the GPU
+vr.js        the renderer — plate, blocks, mask, stereo, lens; all on the GPU
 app.js       orientation, the scan, tracking people, the settings
 ```
 
