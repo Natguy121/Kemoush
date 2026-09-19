@@ -1,15 +1,16 @@
 /* KEMOSH — the seeing.
  *
- * Camera passthrough in stereo, with one rule: whatever you look at straight on
- * stops being there.
+ * Camera passthrough in stereo. Scan the empty room once, and from then on
+ * anyone who walks into it is simply not rendered.
  *
  * How the erasing works, in one paragraph. The phone paints what it sees into a
  * panorama that is locked to the world, not to the screen, so turning your head
  * moves the view across a plate that stays put. Anything in the live frame that
  * disagrees with the plate is something that wasn't there when the room was
- * scanned — a person. Where that disagreement lands near the middle of your
- * vision, the pixels are taken from the plate instead of the camera, and the
- * person is simply not rendered. Look away and the camera comes back.
+ * scanned — a person. Those pixels are drawn from the plate instead of the
+ * camera, so the person is simply gone. A settings toggle can narrow that to
+ * only what you happen to be looking at, but "wherever they stand" is the
+ * default and the point of scanning in the first place.
  */
 (function (global) {
   'use strict';
@@ -68,7 +69,7 @@
     return mat3Mul(M, Rz);
   }
 
-  /* Same thing for a mouse or a thumb, so the game is playable without a phone. */
+  /* Same thing for a mouse or a thumb, so it's usable without a phone. */
   function matFromYawPitch(yaw, pitch) {
     var cp = Math.cos(pitch), sp = Math.sin(pitch);
     var f = [cp * Math.cos(yaw), cp * Math.sin(yaw), sp];
@@ -138,7 +139,7 @@
   ].join('\n');
 
   /* Disagreement between the live frame and the plate. Written in camera space
-     so the game can read blobs straight off it. */
+     so blobs (people) can be read straight off it. */
   var FS_MASK = [
     '#version 300 es',
     'precision highp float;',
@@ -222,8 +223,8 @@
     'uniform vec2 uMaskTan, uEyeTan, uLens;',
     'uniform float uK1, uK2, uErase, uGazeIn, uGazeOut, uTime, uShake, uFade, uAlways;',
     'uniform float uReticle, uHudOn;',
+    /* Each tracked person: direction in xyz, their own erase radius in w. */
     'uniform vec4 uMarks[8];',
-    'uniform float uMarkR[8];',
     'uniform int uMarkN;',
     'void main(){',
     '  vec2 p = (vUv*2.0-1.0) - uLens;',
@@ -246,32 +247,20 @@
        or the silhouette survives as a dark outline of itself. */
     '  m = smoothstep(0.10, 0.45, m);',
     '  float ang = length(t);',
-    /* Markers, and how much each phantom is being looked at. Drawn per eye so
-       they sit where the lens puts them. */
-    '  vec3 ringCol = vec3(0.0);',
+    /* Where a tracked person's own silhouette reaches. Gate on the person's
+       position, not this pixel's, or looking near someone punches a hole in
+       them instead of taking the whole body. The reach is that person's own
+       size, in uMarks[i].w, so someone standing beside them keeps their own
+       fate rather than being taken along too. */
     '  float whole = 0.0;',
     '  for (int i=0; i<8; i++){',
     '    if (i >= uMarkN) break;',
     '    vec3 md = uRinv * uMarks[i].xyz;',
     '    if (md.z > -0.08) continue;',
     '    vec2 mt = md.xy / -md.z;',
-    '    vec2 v = t - mt;',
-    '    float dist = length(v);',
-    '    float centred = 1.0 - smoothstep(uGazeOut*0.55, uGazeOut, length(mt));',
-    /* A person goes as a person. Gate on where the phantom is, not where this
-       pixel is, or looking at someone punches a hole and leaves the rest. The
-       reach is that person's own size: a fixed radius would take everyone
-       standing near them along too. */
-    '    if (dist < uMarkR[i]) whole = max(whole, centred);',
-    '    float ch = uMarks[i].w;',
-    '    float R = clamp(uMarkR[i]*0.95, 0.045, 0.2) + 0.010*sin(uTime*4.0);',
-    '    float ring = smoothstep(0.012, 0.0, abs(dist - R));',
-    '    float a = atan(v.x, v.y)/TAU + 0.5;',
-    '    float arc = (a < abs(ch)) ? smoothstep(0.02, 0.0, abs(dist - R*0.78)) : 0.0;',
-    '    vec3 tint = ch < 0.0 ? vec3(1.0,0.32,0.28) : mix(vec3(0.45,0.85,1.0), vec3(0.6,1.0,0.7), abs(ch));',
-    /* Turn to face one and even the ring goes: looked at straight on, there is
-       nothing there at all, not so much as a mark saying where. */
-    '    ringCol += tint * (ring*0.55 + arc*0.9) * (1.0 - centred);',
+    '    if (length(t - mt) < uMarks[i].w) {',
+    '      whole = max(whole, 1.0 - smoothstep(uGazeOut*0.55, uGazeOut, length(mt)));',
+    '    }',
     '  }',
     /* uAlways is the whole point of the scan: once the room is known, people are
        simply not drawn, wherever they stand. Dropped to zero it reverts to
@@ -289,12 +278,11 @@
        face someone. When they are meant to be simply absent it would give their
        position away, so it drops to a whisper. */
     '  col += vec3(0.25,0.75,0.95) * e*(1.0-e) * mix(2.2, 0.3, uAlways) * m;',
-    '  col += ringCol;',
-    /* Centre mark: where looking becomes erasing. */
+    /* Centre mark: where looking becomes erasing, for the gaze-only mode. */
     '  float gr = smoothstep(0.005, 0.0, abs(ang - uGazeOut));',
-    '  col += vec3(0.9,0.35,0.35) * gr * 0.16 * uReticle;',
+    '  col += vec3(0.9,0.35,0.35) * gr * 0.16 * uReticle * (1.0 - uAlways);',
     '  float dot0 = smoothstep(0.010, 0.0, ang);',
-    '  col += vec3(1.0) * dot0 * 0.55 * uReticle;',
+    '  col += vec3(1.0) * dot0 * 0.55 * uReticle * (1.0 - uAlways);',
     /* The bar is placed in screen units, not world angles, so it stays on the
        glass whatever the camera's field of view turns out to be. */
     '  if (uHudOn > 0.5) {',
@@ -310,7 +298,7 @@
     '}'
   ].join('\n');
 
-  /* A room made of arithmetic, for playing without a camera. */
+  /* A room made of arithmetic, for trying it without a camera. */
   var FS_SIM = [
     '#version 300 es',
     'precision highp float;',
@@ -571,13 +559,13 @@
     },
 
     /* Draw the pretend room, standing in for the camera. */
-    renderSim: function (R, time, phantoms, visible) {
-      var i, arr = new Float32Array(32), n = Math.min(8, phantoms.length);
+    renderSim: function (R, time, people, visible) {
+      var i, arr = new Float32Array(32), n = Math.min(8, people.length);
       for (i = 0; i < n; i++) {
-        arr[i * 4] = phantoms[i].dir[0];
-        arr[i * 4 + 1] = phantoms[i].dir[1];
-        arr[i * 4 + 2] = phantoms[i].dir[2];
-        arr[i * 4 + 3] = phantoms[i].size;
+        arr[i * 4] = people[i].dir[0];
+        arr[i * 4 + 1] = people[i].dir[1];
+        arr[i * 4 + 2] = people[i].dir[2];
+        arr[i * 4 + 3] = people[i].size;
       }
       target(fbo.sim, SIM_W, SIM_H);
       gl.useProgram(prog.sim.p);
@@ -644,18 +632,18 @@
       var eyes = o.stereo ? 2 : 1;
       var vpW = o.stereo ? Math.floor(W / 2) : W;
       var et = eyeTan(vpW, H);
-      /* The game needs this: how far off centre a thing can be and still be on
-         screen. In stereo each eye sees a narrow slice, and rules written in
-         degrees without knowing that end up pointing outside the view. */
+      /* Callers need this: how far off centre a thing can be and still be on
+         screen. In stereo each eye sees a narrow slice, and a rule written in
+         degrees without knowing that ends up pointing outside the view. */
       this.lastEyeTan = et;
-      var arr = new Float32Array(32), rad = new Float32Array(8);
-      var i, n = Math.min(8, o.marks.length);
+      /* Each mark is a tracked person: their world direction plus their own
+         erase radius, packed as one vec4 (xyz dir, w radius) per person. */
+      var arr = new Float32Array(32), i, n = Math.min(8, o.marks.length);
       for (i = 0; i < n; i++) {
         arr[i * 4] = o.marks[i].dir[0];
         arr[i * 4 + 1] = o.marks[i].dir[1];
         arr[i * 4 + 2] = o.marks[i].dir[2];
-        arr[i * 4 + 3] = o.marks[i].charge;
-        rad[i] = o.marks[i].r || 0.12;
+        arr[i * 4 + 3] = o.marks[i].r || 0.12;
       }
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       gl.useProgram(prog.view.p);
@@ -680,7 +668,6 @@
       gl.uniform1f(prog.view.u.uReticle, o.reticle == null ? 1 : o.reticle);
       gl.uniform1f(prog.view.u.uHudOn, o.hud ? 1 : 0);
       gl.uniform4fv(prog.view.u.uMarks, arr);
-      gl.uniform1fv(prog.view.u.uMarkR, rad);
       gl.uniform1i(prog.view.u.uMarkN, n);
       for (i = 0; i < eyes; i++) {
         gl.viewport(i * vpW, 0, vpW, H);

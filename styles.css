@@ -74,8 +74,6 @@ body {
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6);
 }
 
-.card.small { width: min(380px, 100%); text-align: center; }
-
 h1 {
   margin: 0 0 6px;
   font-size: 40px;
@@ -162,7 +160,6 @@ button.go.primary {
   font-size: 14px;
 }
 
-.best { margin: 0 0 6px; color: var(--dim); font-size: 14px; }
 .fine { margin: 10px 0 0; color: var(--dim); font-size: 13px; }
 
 .how { margin: 4px 0 14px; }
@@ -247,13 +244,11 @@ button.go.primary {
 
 /* ---------- which panel shows when ---------- */
 
-#gate, #scanBar, #hud, #over { display: none; }
+#gate, #scanBar, #hud { display: none; }
 
 body[data-phase="idle"] #gate { display: grid; }
 body[data-phase="scan"] #scanBar { display: flex; }
-body[data-phase="play"] #hud { display: flex; }
-body[data-phase="over"] #hud { display: flex; }
-body[data-phase="over"] #over { display: grid; }
+body[data-phase="live"] #hud { display: flex; }
 
 @media (prefers-reduced-motion: reduce) {
   .dot { animation: none; }

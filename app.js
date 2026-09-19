@@ -1,10 +1,11 @@
-/* KEMOSH — the game on top of the seeing.
+/* KEMOSH — orientation, scanning, and the settings on top of the seeing.
  *
- * The rule the renderer enforces is that looking at someone removes them. The
- * game is built out of that rule rather than around it: you hunt things you are
- * not allowed to look at. Hold a phantom at the edge of your vision and the lock
- * fills. Turn to face it — the natural thing to do — and you unmake it, the lock
- * empties, and the streak dies.
+ * The rule the renderer enforces is simple: scan the empty room, press Done,
+ * and from then on anyone who walks into it is not drawn. This file drives
+ * that — reading the phone's orientation or a mouse drag, running the scan
+ * and its compass, tracking roughly where people are so the renderer can
+ * erase each one as a whole body rather than a hole punched through them,
+ * and watching for the plate going stale so it never erases the whole view.
  */
 (function () {
   'use strict';
@@ -35,18 +36,16 @@
   /* ---------- state ---------- */
 
   var canvas, video = null, stream = null;
-  var mode = 'idle';            // idle | scan | play | over
+  var mode = 'idle';            // idle | scan | live
   var simMode = false;
   var R = null, yaw = 0, pitch = 0;
   var orientOk = false, orient = null, screenAngle = 0;
   var t0 = performance.now(), last = t0, frame = 0;
-  var coverage = 0, shake = 0, fade = 1;
-  var score = 0, combo = 1, best = 0, timeLeft = 0, banished = 0, level = 0;
-  var flash = '', flashUntil = 0;
+  var coverage = 0, fade = 1;
   var tracks = [], nextId = 1;
   var scanStart = 0;
   var hudCv, hudCtx, hudAt = 0;
-  var phantoms = [];
+  var people = [];              // the demo room's simulated people
   var primeLeft = 0;
   var lit = 0, stale = 0, trust = 1;
 
@@ -56,63 +55,44 @@
     return n / (buf.length / 4);
   }
 
-  try { best = parseInt(localStorage.getItem('kemosh.best') || '0', 10) || 0; } catch (e) {}
-
   /* Angles are kept as tangents throughout — same units the shader uses, so
      "is it in the middle of the view" means the same thing in both places. */
   function tanOf(deg) { return Math.tan(deg * Math.PI / 180); }
   var ANGLE_DONE = 0.96;    // share of compass directions before the scan counts as complete
   var MIN_AREA = 0.006;     // smaller than this is speckle, not somebody
   var GAZE_IN = tanOf(3);
-  var BAND_OUT = tanOf(40);
 
   /* How far off centre something can be and still be on screen. In stereo each
-     eye gets a slice barely 20° wide, so anything the rules place in degrees has
-     to be measured against this rather than against a number picked by eye. */
+     eye gets a slice barely 20° wide, so a cone measured in plain degrees would
+     otherwise reach past the edge of what's actually visible. */
   function viewEdge() {
     var e = VR.lastEyeTan;
     return e ? Math.min(e[0], e[1]) : 0.37;
   }
 
-  /* The cone that erases. It widens with each banishing — but never past most of
-     the view, or every phantom on screen would be inside it and the round would
-     become unwinnable rather than hard. */
+  /* The cone used by "only where I look" mode: wide enough to feel deliberate,
+     but never past most of the view. */
   function gazeOut() {
-    return Math.min(tanOf(14 + Math.min(7, level * 0.5)), viewEdge() * 0.62);
-  }
-  function holdTime() { return 1.9 + Math.min(1.4, level * 0.12); }
-
-  /* How fast a phantom's lock fills at a given distance off centre: nothing
-     inside the cone, best about two thirds of the way out to the edge of vision,
-     tailing off once it is so far round that you are barely holding it at all.
-     The sweet spot is pinned to the real edge of the view so that it is
-     somewhere you can actually put something. */
-  function chargeWeight(mag) {
-    var go = gazeOut(), edge = viewEdge();
-    if (mag <= go || mag >= BAND_OUT) return 0;
-    var sweet = go + Math.max(0.05, edge - go) * 0.65;
-    var rise = Math.min(1, (mag - go) / Math.max(0.01, sweet - go));
-    var fall = 1 - Math.min(1, Math.max(0, (mag - BAND_OUT * 0.72) / (BAND_OUT * 0.28)));
-    return rise * fall;
+    return Math.min(tanOf(16), viewEdge() * 0.7);
   }
 
-  /* ---------- the pretend room's occupants ---------- */
+  /* ---------- the demo room's occupants (no camera needed) ---------- */
 
-  function spawnPhantom() {
+  function spawnPerson() {
     var y = Math.random() * Math.PI * 2;
     return {
       yaw: y, pitch: (Math.random() - 0.5) * 0.28,
-      vy: (Math.random() < 0.5 ? -1 : 1) * (0.22 + Math.random() * 0.30),
+      vy: (Math.random() < 0.5 ? -1 : 1) * (0.18 + Math.random() * 0.22),
       size: 0.085 + Math.random() * 0.045,
       turn: 1 + Math.random() * 3,
       dir: [1, 0, 0]
     };
   }
-  function stepPhantoms(dt, t) {
+  function stepPeople(dt, t) {
     var i, p;
-    while (phantoms.length < 4) phantoms.push(spawnPhantom());
-    for (i = 0; i < phantoms.length; i++) {
-      p = phantoms[i];
+    while (people.length < 3) people.push(spawnPerson());
+    for (i = 0; i < people.length; i++) {
+      p = people[i];
       p.turn -= dt;
       if (p.turn <= 0) { p.vy = -p.vy * (0.7 + Math.random() * 0.6); p.turn = 1.5 + Math.random() * 3.5; }
       p.yaw += p.vy * dt;
@@ -122,7 +102,10 @@
     }
   }
 
-  /* ---------- finding bodies in the mask ---------- */
+  /* ---------- finding bodies in the mask ----------
+     This exists so a hidden person's whole silhouette disappears together,
+     rather than the renderer punching a hole only where you happen to be
+     looking. It is a quality feature of the erasing, not a game mechanic. */
 
   var DW = VR.MASK_W >> 1, DH = VR.MASK_H >> 1;
   var cells = new Uint8Array(DW * DH);
@@ -201,9 +184,8 @@
   }
 
   /* One body can still arrive as two pieces — head above, torso below, with a
-     gap where an arm or a shadow broke the outline. Two rings on one person
-     would be two targets, so put anything stacked and overlapping back
-     together. */
+     gap where an arm or a shadow broke the outline. Put anything stacked and
+     overlapping back together so it is treated as one person. */
   function mergeStacked(bs) {
     var i, j, a, b, merged = true;
     while (merged && bs.length > 1) {
@@ -242,13 +224,10 @@
     return VR.mat3MulVec(R, [t[0] / n, t[1] / n, -1 / n]);
   }
 
-  function tanFromDir(d) {
-    var s = VR.mat3MulVec(VR.mat3T(R), d);
-    if (s[2] > -0.05) return null;
-    return [s[0] / -s[2], s[1] / -s[2]];
-  }
-
-  /* ---------- tracking ---------- */
+  /* ---------- tracking ----------
+     Keeps each spotted body's identity from frame to frame, purely so its
+     erase radius doesn't jitter and so a person briefly missed by the mask
+     doesn't flash back into view for a frame. */
 
   function updateTracks(blobs, dt) {
     var i, j, tr, b, bestJ, bestD, d;
@@ -279,10 +258,10 @@
       if (used[j]) continue;
       tracks.push({
         id: nextId++, u: blobs[j].u, v: blobs[j].v, area: blobs[j].area,
-        w: blobs[j].w, h: blobs[j].h, age: 0, miss: 0, charge: 0, matched: true, gone: 0
+        w: blobs[j].w, h: blobs[j].h, age: 0, miss: 0, matched: true
       });
     }
-    tracks = tracks.filter(function (t) { return t.miss < 0.8 && t.gone <= 0; });
+    tracks = tracks.filter(function (t) { return t.miss < 0.8; });
     if (tracks.length > 8) {
       tracks.sort(function (a, b2) { return b2.area - a.area; });
       tracks.length = 8;
@@ -293,51 +272,14 @@
     }
   }
 
-  /* How far out from a phantom's centre its own silhouette reaches, in the same
-     tangent units the view works in. The renderer erases out to this and no
-     further, so a person standing beside the one you are looking at keeps their
-     own fate. A little slack covers the feathered edge of the mask. */
+  /* How far out from a tracked person's centre their own silhouette reaches,
+     in the same tangent units the view works in. The renderer erases out to
+     this and no further, so a person standing beside the one being erased
+     keeps their own fate. A little slack covers the feathered mask edge. */
   function markRadius(tr) {
     var halfW = (tr.w || 0.12) * MT[0];
     var halfH = (tr.h || 0.2) * MT[1];
     return Math.min(0.30, Math.max(0.05, Math.max(halfW, halfH) * 1.25));
-  }
-
-  function say(msg) { flash = msg; flashUntil = performance.now() + 1400; }
-
-  function scoreTracks(dt) {
-    var i, tr, t, mag, go = gazeOut(), rate = 1 / holdTime(), w;
-    for (i = 0; i < tracks.length; i++) {
-      tr = tracks[i];
-      if (!tr.dir || tr.age < 0.25 || tr.area < MIN_AREA) continue;
-      t = tanFromDir(tr.dir);
-      mag = t ? Math.hypot(t[0], t[1]) : 99;
-      if (!tr.matched) {
-        tr.charge = Math.max(0, tr.charge - 0.22 * dt);
-        tr.look = 0;
-      } else if (mag < go) {
-        /* You looked. It is being taken apart, and so is the lock. */
-        if (tr.charge > 0.12) { say('BLINKED'); combo = 1; }
-        tr.charge = Math.max(0, tr.charge - 1.1 * dt);
-        tr.look = -1;
-        shake = Math.min(0.012, shake + dt * 0.02);
-      } else if (mag < BAND_OUT) {
-        w = chargeWeight(mag);
-        tr.charge = Math.min(1, tr.charge + Math.max(0.12, w) * rate * dt);
-        tr.look = 1;
-        if (tr.charge >= 1) {
-          banished++; level++;
-          score += Math.round(100 * combo);
-          timeLeft = Math.min(120, timeLeft + 4);
-          say('BANISHED  ×' + combo);
-          combo = Math.min(9, combo + 1);
-          tr.gone = 1;
-        }
-      } else {
-        tr.charge = Math.max(0, tr.charge - 0.12 * dt);
-        tr.look = 0;
-      }
-    }
   }
 
   /* ---------- the bar you read through the lenses ---------- */
@@ -392,46 +334,17 @@
       c.font = '500 22px ui-sans-serif, system-ui, sans-serif';
       c.fillText(done ? 'every angle covered — press Done'
         : 'fill the dark gaps, then press Done', W / 2, 108);
-    } else if (mode === 'play') {
-      c.textAlign = 'left';
-      c.fillStyle = '#9fb3c8';
-      c.font = '600 22px ui-sans-serif, system-ui, sans-serif';
-      c.fillText('SCORE', 30, 26);
-      c.fillStyle = '#ffffff';
-      c.font = '700 46px ui-sans-serif, system-ui, sans-serif';
-      c.fillText(String(score), 30, 66);
-      c.textAlign = 'right';
-      c.fillStyle = '#9fb3c8';
-      c.font = '600 22px ui-sans-serif, system-ui, sans-serif';
-      c.fillText('TIME', W - 30, 26);
-      c.fillStyle = timeLeft < 10 ? '#ff6b5e' : '#ffffff';
-      c.font = '700 46px ui-sans-serif, system-ui, sans-serif';
-      c.fillText(timeLeft.toFixed(0) + 's', W - 30, 66);
+    } else if (mode === 'live') {
       c.textAlign = 'center';
       if (stale > 1.5) {
         c.fillStyle = '#ffc46b';
         c.font = '600 25px ui-sans-serif, system-ui, sans-serif';
-        c.fillText('the room changed — relearning it', W / 2, 56);
-      } else if (now < flashUntil) {
-        c.fillStyle = flash.indexOf('BLINK') === 0 ? '#ff6b5e' : '#7dffb0';
-        c.font = '700 34px ui-sans-serif, system-ui, sans-serif';
-        c.fillText(flash, W / 2, 56);
+        c.fillText('the room changed — relearning it', W / 2, 40);
       } else {
         c.fillStyle = '#93a7bb';
-        c.font = '500 25px ui-sans-serif, system-ui, sans-serif';
-        c.fillText(combo > 1 ? '×' + combo + ' streak' : 'keep them at the edge', W / 2, 56);
+        c.font = '500 24px ui-sans-serif, system-ui, sans-serif';
+        c.fillText(S.hide === 'always' ? 'people are invisible' : 'look away to hide them', W / 2, 40);
       }
-      c.fillStyle = '#5f7488';
-      c.font = '500 21px ui-sans-serif, system-ui, sans-serif';
-      c.fillText(banished + ' banished', W / 2, 104);
-    } else if (mode === 'over') {
-      c.textAlign = 'center';
-      c.fillStyle = '#ffffff';
-      c.font = '700 40px ui-sans-serif, system-ui, sans-serif';
-      c.fillText(score + ' · ' + banished + ' banished', W / 2, 46);
-      c.fillStyle = '#9fb3c8';
-      c.font = '500 25px ui-sans-serif, system-ui, sans-serif';
-      c.fillText('best ' + best + '  —  double-tap to play again', W / 2, 92);
     }
     VR.uploadHud(hudCv);
   }
@@ -458,8 +371,8 @@
     var scanning = (mode === 'scan' || primeLeft > 0);
 
     if (simMode) {
-      stepPhantoms(scanning ? 0 : dt, t);
-      VR.renderSim(R, t, phantoms, mode === 'play' || mode === 'over');
+      stepPeople(scanning ? 0 : dt, t);
+      VR.renderSim(R, t, people, mode === 'live');
     }
 
     VR.sense(R, {
@@ -477,7 +390,7 @@
     if (mode !== 'idle' && frame % 2 === 0) {
       var buf = VR.readMask();
       lit = lit * 0.7 + litFraction(buf) * 0.3;
-      if (mode === 'play') {
+      if (mode === 'live') {
         if (trust < 0.35) tracks = [];
         else updateTracks(findBlobs(buf, 96), dt * 2);
       }
@@ -488,11 +401,6 @@
        whole view. Stop erasing, and let the plate relearn instead. */
     stale = lit > 0.30 ? stale + dt : Math.max(0, stale - dt * 2);
     trust = 1 - Math.min(1, Math.max(0, (lit - 0.22) / 0.20));
-    if (mode === 'play') {
-      scoreTracks(dt);
-      timeLeft -= dt;
-      if (timeLeft <= 0) endRound();
-    }
 
     if (mode === 'scan') {
       /* The scan ends when the player says it does, not on a timer. They are
@@ -507,18 +415,13 @@
     }
     if (primeLeft > 0) primeLeft -= dt;
 
-    shake = Math.max(0, shake - dt * 0.03);
-    fade += ((mode === 'over' ? 0.55 : 1) - fade) * Math.min(1, dt * 4);
+    fade += ((mode === 'idle' ? 0.55 : 1) - fade) * Math.min(1, dt * 4);
 
     var marks = [];
-    if (mode === 'play') {
+    if (mode === 'live') {
       tracks.forEach(function (tr) {
         if (!tr.dir || tr.age < 0.25 || tr.area < MIN_AREA) return;
-        marks.push({
-          dir: tr.dir,
-          charge: tr.look < 0 ? -Math.max(0.12, tr.charge) : tr.charge,
-          r: markRadius(tr)
-        });
+        marks.push({ dir: tr.dir, r: markRadius(tr) });
       });
     }
 
@@ -529,8 +432,8 @@
       erase: mode === 'scan' ? 0 : S.erase * trust,
       always: (mode === 'scan' || S.hide !== 'always') ? 0 : 1,
       gazeIn: GAZE_IN, gazeOut: gazeOut(),
-      time: t, shake: shake, fade: fade,
-      reticle: mode === 'idle' ? 0 : 1,
+      time: t, fade: fade,
+      reticle: mode === 'live' ? 1 : 0,
       hud: mode !== 'idle',
       marks: marks
     });
@@ -540,8 +443,6 @@
   }
 
   function updateDom() {
-    $('#mScore').textContent = score;
-    $('#mTime').textContent = mode === 'play' ? timeLeft.toFixed(0) + 's' : '—';
     $('#mSeen').textContent = tracks.filter(function (t) { return t.matched && t.age > 0.25; }).length;
     $('#mCov').textContent = Math.round(coverage * 100) + '%';
   }
@@ -555,14 +456,14 @@
     tracks = [];
     document.body.dataset.phase = 'scan';
     if (simMode) {
-      /* Sweep the pretend room so the plate is built the same way a real one is. */
+      /* Sweep the demo room so the plate is built the same way a real one is. */
       primeSweep();
     }
   }
 
-  /* Give the pretend room a head start, but deliberately not a complete one:
-     the compass is left with gaps so that pressing Done is a real decision,
-     the way it is with a real camera. */
+  /* Give the demo room a head start, but deliberately not a complete one: the
+     compass is left with gaps so that pressing Done is a real decision, the
+     way it is with a real camera. */
   function primeSweep() {
     var steps = 110, i = 0;
     primeLeft = 0.1;
@@ -572,7 +473,7 @@
       yaw = f * Math.PI * 1.25;
       pitch = Math.sin(f * Math.PI * 3) * 0.5;
       var Rp = VR.matFromYawPitch(yaw, pitch);
-      VR.renderSim(Rp, 0, phantoms, false);
+      VR.renderSim(Rp, 0, people, false);
       VR.sense(Rp, { t0: 0.06, t1: 0.2, smooth: 0.5, slow: 0.35, fast: 0.7 });
       i++;
       if (i % 25 === 0) { coverage = VR.coverage(); setTimeout(step, 0); } else step();
@@ -580,20 +481,10 @@
     coverage = VR.coverage();
   }
 
-  function startPlay() {
-    mode = 'play';
-    score = 0; combo = 1; banished = 0; level = 0; timeLeft = 60;
-    tracks = []; flash = ''; fade = 1;
-    document.body.dataset.phase = 'play';
-    say('GO');
-  }
-
-  function endRound() {
-    mode = 'over';
-    if (score > best) { best = score; try { localStorage.setItem('kemosh.best', String(best)); } catch (e) {} }
-    document.body.dataset.phase = 'over';
-    $('#overScore').textContent = score;
-    $('#overSub').textContent = banished + ' banished · best ' + best;
+  function startLive() {
+    mode = 'live';
+    tracks = []; fade = 1;
+    document.body.dataset.phase = 'live';
   }
 
   function quit() {
@@ -641,7 +532,7 @@
   async function startCamera() {
     note('');
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      note('This browser won’t hand over a camera. Open the page over https, or play the room instead.');
+      note('This browser won’t hand over a camera. Open the page over https, or try the room instead.');
       return;
     }
     try {
@@ -651,8 +542,8 @@
       });
     } catch (e) {
       note(e && e.name === 'NotAllowedError'
-        ? 'The camera was refused. Allow it in the browser’s site settings, or play the room instead.'
-        : 'No camera came back (' + ((e && e.name) || 'unknown') + '). You can still play the room.');
+        ? 'The camera was refused. Allow it in the browser’s site settings, or try the room instead.'
+        : 'No camera came back (' + ((e && e.name) || 'unknown') + '). You can still try the room.');
       return;
     }
     video.srcObject = stream;
@@ -715,15 +606,13 @@
       else return;
       e.preventDefault();
     });
-    /* Two taps is the only control that works with a phone inside a box. */
+    /* Two taps is a control that works with a phone inside a closed box: it
+       ends the scan the same way the Done button does. */
     var lastTap = 0;
     canvas.addEventListener('pointerup', function () {
       var n = performance.now();
       if (n - lastTap < 380) {
-        /* The same gesture the headset allows: done scanning, or done playing. */
-        if (mode === 'scan') startPlay();
-        else if (mode === 'over') startScan();
-        else if (mode === 'play') endRound();
+        if (mode === 'scan') startLive();
         lastTap = 0;
       } else lastTap = n;
     });
@@ -750,8 +639,7 @@
     $('#btnRoom').addEventListener('click', startRoom);
     $('#btnQuit').addEventListener('click', quit);
     $('#btnRescan').addEventListener('click', startScan);
-    $('#btnDone').addEventListener('click', function () { if (mode === 'scan') startPlay(); });
-    $('#btnAgain').addEventListener('click', startScan);
+    $('#btnDone').addEventListener('click', function () { if (mode === 'scan') startLive(); });
     $('#btnMenu').addEventListener('click', quit);
     $('#btnHow').addEventListener('click', function () {
       var h = $('#how'); h.hidden = !h.hidden;
@@ -782,9 +670,8 @@
     $('#optStereo').checked = S.stereo;
     $('#optStereo').addEventListener('change', function () { S.stereo = $('#optStereo').checked; save(); });
 
-    $('#bestLine').textContent = best ? 'best so far: ' + best : '';
     if (!window.isSecureContext) {
-      note('This page isn’t on https, so the browser will not give it a camera. The room still plays.');
+      note('This page isn’t on https, so the browser will not give it a camera. The room still works.');
     }
 
     window.addEventListener('orientationchange', function () { setTimeout(readScreenAngle, 250); });
@@ -793,16 +680,17 @@
     bindLook();
     document.body.dataset.phase = 'idle';
 
-    /* A small handle on the running game, for checking behaviour from the
+    /* A small handle on the running page, for checking behaviour from the
        console on a real phone as much as from a test. */
     window.KEMOSH = {
       look: function (y, p) { yaw = y; pitch = p; },
       scan: startScan,
-      play: startPlay,
+      live: startLive,
       /* A point in the mask, turned into the world direction it came from. */
       dirFromMaskUv: dirFromUv,
-      /* Where a phantom is on the glass right now — for lining an overlay up,
-         or for checking that what is drawn there is what should be. */
+      /* Where a tracked person is on the glass right now — for lining an
+         overlay up, or for checking that what is drawn there is what should
+         be. */
       project: function (dir, eye) {
         var lens = LENS[S.lens] || LENS.light;
         var stereo = S.stereo && mode !== 'idle';
@@ -811,11 +699,10 @@
       state: function () {
         return {
           mode: mode, sim: simMode, coverage: coverage, lit: lit, trust: trust, stale: stale,
-          score: score, combo: combo,
-          banished: banished, timeLeft: timeLeft, gazeOut: gazeOut(),
-          phantoms: phantoms.map(function (p) { return { yaw: p.yaw, pitch: p.pitch, size: p.size }; }),
+          gazeOut: gazeOut(),
+          people: people.map(function (p) { return { yaw: p.yaw, pitch: p.pitch, size: p.size }; }),
           tracks: tracks.map(function (t) {
-            return { id: t.id, u: t.u, v: t.v, dir: t.dir, area: t.area, age: t.age, charge: t.charge, look: t.look || 0 };
+            return { id: t.id, u: t.u, v: t.v, dir: t.dir, area: t.area, age: t.age };
           })
         };
       }

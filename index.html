@@ -25,23 +25,19 @@
 
     <div class="row">
       <button id="btnCam" class="primary">Use the camera</button>
-      <button id="btnRoom">Play the room instead</button>
+      <button id="btnRoom">Try the room instead</button>
     </div>
     <p id="note" class="note" hidden></p>
-    <p id="bestLine" class="best"></p>
 
-    <button id="btnHow" class="link">How it is played</button>
+    <button id="btnHow" class="link">How it works</button>
     <div id="how" class="how" hidden>
       <ol>
         <li><b>Scan every angle.</b> Turn all the way round on the spot with nobody in
           front of you. A compass shows which directions are still dark. When it&rsquo;s
           filled in, press <b>Done</b>.</li>
         <li><b>Now people are invisible.</b> Anyone who walks in front of you simply
-          isn&rsquo;t drawn &mdash; you see the room behind them.</li>
-        <li><b>Hunt what you cannot see.</b> A ring marks where each invisible person is.
-          Hold one off to the side and its ring fills. Full ring, banished, points.</li>
-        <li><b>Facing one erases even the ring</b> &mdash; nothing there at all, the lock
-          empties, the streak is gone. That is the whole difficulty.</li>
+          isn&rsquo;t drawn &mdash; you see the room behind them, wherever in view
+          they are.</li>
       </ol>
       <p class="fine">One camera means both eyes see the same picture. It sits right for
         turning your head, but it is not true depth.</p>
@@ -82,29 +78,15 @@
   <button id="btnQuit" class="link">quit</button>
 </section>
 
-<!-- playing -->
+<!-- watching -->
 <section id="hud" class="strip">
-  <span>score <b id="mScore">0</b></span>
-  <span>time <b id="mTime">&mdash;</b></span>
   <span>seen <b id="mSeen">0</b></span>
   <span>room <b id="mCov">0%</b></span>
   <button id="btnRescan" class="link">rescan</button>
   <button id="btnMenu" class="link">quit</button>
 </section>
 
-<!-- finished -->
-<section id="over" class="screen">
-  <div class="card small">
-    <h2 id="overScore">0</h2>
-    <p id="overSub" class="tag"></p>
-    <div class="row">
-      <button id="btnAgain" class="primary">Again</button>
-    </div>
-    <p class="fine">Inside a Cardboard, double-tap the case to start another round.</p>
-  </div>
-</section>
-
 <script src="vr.js"></script>
-<script src="game.js"></script>
+<script src="app.js"></script>
 </body>
 </html>

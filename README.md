@@ -1,11 +1,9 @@
 # KEMOSH
 
-A VR game for a phone and a cardboard headset. You scan the empty room from every
-angle, press **Done**, and from that moment **the people in it are invisible**.
-Someone walks in front of you and you see the wall behind them.
-
-They are also the game. You hunt what you cannot see — and the one thing you may
-not do is look straight at one.
+A camera passthrough tool for a phone and a cardboard headset. You scan the
+empty room from every angle, press **Done**, and from that moment **the people
+in it are invisible**. Someone walks in front of you and you see the wall
+behind them.
 
 ## Getting it onto a phone
 
@@ -13,7 +11,7 @@ The camera is only handed out to pages served over **https**, so opening the fil
 off a memory card won't work. Two ways round that:
 
 - **GitHub Pages.** In this repository: *Settings → Pages → Source: deploy from
-  branch*, pick the branch, save. A minute later the game is at
+  branch*, pick the branch, save. A minute later it's at
   `https://natguy121.github.io/Kemoush/`. Open that on the phone.
 - **Any other web host.** It is four plain files with nothing to build. Copy them
   anywhere that serves https.
@@ -21,12 +19,13 @@ off a memory card won't work. Two ways round that:
 Then: open the page, tap **Use the camera**, allow it, put the phone in the
 headset. It goes fullscreen and locks to landscape on its own.
 
-No camera handy, or trying it on a laptop? **Play the room instead** builds a
-room out of arithmetic and puts people in it. Drag with the mouse, or use the
-arrow keys, to look around. Everything else behaves identically — it runs through
-the same pipeline as the real camera.
+No camera handy, or trying it on a laptop? **Try the room instead** builds a
+room out of arithmetic and puts a couple of simulated people in it, so the whole
+effect is visible without a camera. Drag with the mouse, or use the arrow keys,
+to look around. Everything else behaves identically — it runs through the same
+pipeline as the real camera.
 
-## How to play
+## How to use it
 
 1. **Scan every angle.** Turn all the way round on the spot, with nobody in front
    of you, while the phone learns the empty room. A compass along the bottom of
@@ -34,25 +33,11 @@ the same pipeline as the real camera.
    Nothing is on a timer; it waits for you.
 2. **Press Done.** The scan ends when you say so, not when a clock runs out.
    Inside the headset, a double-tap on the case does the same thing.
-3. **Now people are invisible.** Anyone who walks in front of you simply isn't
-   drawn — you see the room behind them, wherever in your view they are.
-4. **Hunt what you cannot see.** A ring marks where each invisible person is.
-   Hold one off to one side — outside the faint circle in the middle — and its
-   ring fills up. Full ring, banished, points, and four seconds back on the clock.
-5. **Facing one erases even the ring.** Turn to look straight at a phantom and
-   there is nothing there at all, not so much as a mark saying where. The lock
-   empties and the streak dies. Instinct says turn to face what you are chasing.
-   Instinct is wrong here.
+3. **From then on, people are invisible.** Anyone who walks in front of you
+   simply isn't drawn — you see the room behind them, wherever in view they are.
 
-Each banishing makes the next harder: the cone that unmakes them grows, and the
-rings take longer to fill. The cone stops growing before it swallows the whole
-view, though — through Cardboard lenses each eye only sees about twenty degrees
-either side, so there is always a band left to hold someone in. A streak
-multiplies the score up to ×9, and blinking — letting one drift into the middle
-while it was charging — resets it.
-
-Inside a headset there are no buttons, so **double-tap the case**: that ends a
-round, and starts the next one from the score screen.
+That's the whole thing. There's no score, no timer, nothing to win — it's a way
+of seeing, not a game.
 
 ## How the erasing works
 
@@ -75,7 +60,8 @@ silhouette.
 That is what pressing Done switches on. Before it, nothing is erased — the phone
 is still learning and would only be guessing. After it, people are gone wherever
 they stand. *Settings → Hide people → only where I look* puts the erasing back on
-a leash, so they fade as you turn towards them instead.
+a leash, so they fade only as you turn towards them, and reappear again when you
+look away.
 
 Nothing is downloaded, no model runs, and no picture leaves the phone. It is
 arithmetic on the frame in front of you.
@@ -124,13 +110,13 @@ plate no longer matches the room. It stops erasing by itself and repaints. Press
 index.html   the page, the start screen, the settings
 styles.css   the look
 vr.js        the renderer — plate, mask, stereo, lens, everything on the GPU
-game.js      orientation, finding and tracking people, the rules, the scoring
+app.js       orientation, the scan, tracking people, the settings
 ```
 
 Plain HTML, CSS and JavaScript. No libraries, no build step, no install. Edit a
 file, reload the page.
 
 `window.KEMOSH` is left on the page on purpose: `KEMOSH.state()` reports what the
-game currently believes — coverage, tracked phantoms, how much of the mask is
+page currently believes — coverage, tracked people, how much of the mask is
 lit — which is the quickest way to see why something isn't behaving on a real
 phone.
