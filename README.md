@@ -14,7 +14,7 @@ off a memory card won't work. Two ways round that:
 
 - **GitHub Pages.** In this repository: *Settings → Pages → Source: deploy from
   branch*, pick the branch, save. A minute later the game is at
-  `https://natguy121.github.io/kemosh/`. Open that on the phone.
+  `https://natguy121.github.io/Kemoush/`. Open that on the phone.
 - **Any other web host.** It is four plain files with nothing to build. Copy them
   anywhere that serves https.
 
