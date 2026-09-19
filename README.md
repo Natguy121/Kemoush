@@ -1,11 +1,11 @@
 # KEMOSH
 
-A VR game for a phone and a cardboard headset. You see the room through the
-camera, in stereo, exactly as it is — except that **anything you look at straight
-on stops being there**.
+A VR game for a phone and a cardboard headset. You scan the empty room from every
+angle, press **Done**, and from that moment **the people in it are invisible**.
+Someone walks in front of you and you see the wall behind them.
 
-People in the room are the game. You hunt them, and the one thing you may not do
-is look at them.
+They are also the game. You hunt what you cannot see — and the one thing you may
+not do is look straight at one.
 
 ## Getting it onto a phone
 
@@ -28,20 +28,28 @@ the same pipeline as the real camera.
 
 ## How to play
 
-1. **Scan.** Turn slowly on the spot with nobody in front of you. The phone is
-   learning what the empty room looks like. It takes a few seconds and the bar
-   tells you how far along it is.
-2. **Hunt.** A phantom is a person the room doesn't account for. Each one gets a
-   ring around it.
-3. **Do not look at them.** Hold a phantom off to one side — outside the faint
-   circle in the middle — and its ring fills up. Full ring, banished, points, and
-   four seconds back on the clock.
-4. **Facing one unmakes it.** It dissolves, the ring empties, and the streak
-   dies. Instinct says turn to face what you are chasing. Instinct is wrong here.
+1. **Scan every angle.** Turn all the way round on the spot, with nobody in front
+   of you, while the phone learns the empty room. A compass along the bottom of
+   the view shows which directions are still dark — turn until they are all lit.
+   Nothing is on a timer; it waits for you.
+2. **Press Done.** The scan ends when you say so, not when a clock runs out.
+   Inside the headset, a double-tap on the case does the same thing.
+3. **Now people are invisible.** Anyone who walks in front of you simply isn't
+   drawn — you see the room behind them, wherever in your view they are.
+4. **Hunt what you cannot see.** A ring marks where each invisible person is.
+   Hold one off to one side — outside the faint circle in the middle — and its
+   ring fills up. Full ring, banished, points, and four seconds back on the clock.
+5. **Facing one erases even the ring.** Turn to look straight at a phantom and
+   there is nothing there at all, not so much as a mark saying where. The lock
+   empties and the streak dies. Instinct says turn to face what you are chasing.
+   Instinct is wrong here.
 
 Each banishing makes the next harder: the cone that unmakes them grows, and the
-rings take longer to fill. A streak multiplies the score up to ×9, and blinking —
-letting one drift into the middle while it was charging — resets it.
+rings take longer to fill. The cone stops growing before it swallows the whole
+view, though — through Cardboard lenses each eye only sees about twenty degrees
+either side, so there is always a band left to hold someone in. A streak
+multiplies the score up to ×9, and blinking — letting one drift into the middle
+while it was charging — resets it.
 
 Inside a headset there are no buttons, so **double-tap the case**: that ends a
 round, and starts the next one from the score screen.
@@ -60,9 +68,14 @@ colour survives that better than brightness does.
 
 Then the leftover is shaped into people — connected blobs, filtered by how tall,
 wide and solid they are — and tracked from frame to frame so each one keeps an
-identity while it moves. When a tracked person drifts into the middle of your
-view, **every pixel of that person** is drawn from the plate instead of from the
-camera. Not a hole cut through them: the whole silhouette, dissolving.
+identity while it moves. **Every pixel of a tracked person** is then drawn from
+the plate instead of from the camera. Not a hole cut through them: the whole
+silhouette.
+
+That is what pressing Done switches on. Before it, nothing is erased — the phone
+is still learning and would only be guessing. After it, people are gone wherever
+they stand. *Settings → Hide people → only where I look* puts the erasing back on
+a leash, so they fade as you turn towards them instead.
 
 Nothing is downloaded, no model runs, and no picture leaves the phone. It is
 arithmetic on the frame in front of you.
@@ -79,8 +92,10 @@ Worth knowing before it surprises you:
   stops matching, and it knows: erasing switches off and the plate relearns,
   which you'll see as *the room changed — relearning it*.
 - **Anyone standing still during the scan gets painted into the plate**, and then
-  the room thinks they're furniture. They'll fade back in once they move. *Rescan*
-  fixes it outright.
+  the room thinks they're furniture — they stay visible. This is why the scan
+  asks for an empty room and why Done is yours to press: don't press it until
+  everyone is out of shot. They'll fade back in once they move; *Rescan* fixes it
+  outright.
 - **A blank white wall gives it nothing to work with.** Rooms with texture in
   them work better.
 
@@ -95,6 +110,7 @@ Everything below is in **Settings** on the start screen.
 | The two halves don't merge into one image | **Eye spacing** |
 | Nobody ever vanishes | Raise **Spot people**, then *rescan* |
 | Things vanish that aren't people | Lower **Spot people** |
+| People only fade when you face them | **Hide people** → *wherever they are* |
 | You want the camera plain, with no erasing | **How completely** down to 0 |
 | Not using a headset | Turn **Stereo** off for a single full-screen view |
 

@@ -20,6 +20,7 @@
     ipd: 0.06,      // lens centre offset per eye
     sens: 1.0,      // how readily it calls something a person
     erase: 1.0,     // how completely they go
+    hide: 'always', // 'always' — invisible wherever they stand; 'gaze' — only what you look at
     stereo: true
   };
   var S = Object.assign({}, DEF);
@@ -60,12 +61,40 @@
   /* Angles are kept as tangents throughout — same units the shader uses, so
      "is it in the middle of the view" means the same thing in both places. */
   function tanOf(deg) { return Math.tan(deg * Math.PI / 180); }
-  var SCAN_TARGET = 0.30;   // share of the sphere worth having before playing
+  var ANGLE_DONE = 0.96;    // share of compass directions before the scan counts as complete
   var MIN_AREA = 0.006;     // smaller than this is speckle, not somebody
   var GAZE_IN = tanOf(3);
   var BAND_OUT = tanOf(40);
-  function gazeOut() { return tanOf(14 + Math.min(7, level * 0.5)); }
+
+  /* How far off centre something can be and still be on screen. In stereo each
+     eye gets a slice barely 20° wide, so anything the rules place in degrees has
+     to be measured against this rather than against a number picked by eye. */
+  function viewEdge() {
+    var e = VR.lastEyeTan;
+    return e ? Math.min(e[0], e[1]) : 0.37;
+  }
+
+  /* The cone that erases. It widens with each banishing — but never past most of
+     the view, or every phantom on screen would be inside it and the round would
+     become unwinnable rather than hard. */
+  function gazeOut() {
+    return Math.min(tanOf(14 + Math.min(7, level * 0.5)), viewEdge() * 0.62);
+  }
   function holdTime() { return 1.9 + Math.min(1.4, level * 0.12); }
+
+  /* How fast a phantom's lock fills at a given distance off centre: nothing
+     inside the cone, best about two thirds of the way out to the edge of vision,
+     tailing off once it is so far round that you are barely holding it at all.
+     The sweet spot is pinned to the real edge of the view so that it is
+     somewhere you can actually put something. */
+  function chargeWeight(mag) {
+    var go = gazeOut(), edge = viewEdge();
+    if (mag <= go || mag >= BAND_OUT) return 0;
+    var sweet = go + Math.max(0.05, edge - go) * 0.65;
+    var rise = Math.min(1, (mag - go) / Math.max(0.01, sweet - go));
+    var fall = 1 - Math.min(1, Math.max(0, (mag - BAND_OUT * 0.72) / (BAND_OUT * 0.28)));
+    return rise * fall;
+  }
 
   /* ---------- the pretend room's occupants ---------- */
 
@@ -239,6 +268,8 @@
         tr.u += (b.u - tr.u) * 0.5;
         tr.v += (b.v - tr.v) * 0.5;
         tr.area = tr.area * 0.7 + b.area * 0.3;
+        tr.w = tr.w * 0.7 + b.w * 0.3;
+        tr.h = tr.h * 0.7 + b.h * 0.3;
         tr.matched = true; tr.miss = 0; tr.age += dt;
       } else {
         tr.miss += dt;
@@ -246,7 +277,10 @@
     }
     for (j = 0; j < blobs.length; j++) {
       if (used[j]) continue;
-      tracks.push({ id: nextId++, u: blobs[j].u, v: blobs[j].v, area: blobs[j].area, age: 0, miss: 0, charge: 0, matched: true, gone: 0 });
+      tracks.push({
+        id: nextId++, u: blobs[j].u, v: blobs[j].v, area: blobs[j].area,
+        w: blobs[j].w, h: blobs[j].h, age: 0, miss: 0, charge: 0, matched: true, gone: 0
+      });
     }
     tracks = tracks.filter(function (t) { return t.miss < 0.8 && t.gone <= 0; });
     if (tracks.length > 8) {
@@ -257,6 +291,16 @@
     for (i = 0; i < tracks.length; i++) {
       if (tracks[i].matched) tracks[i].dir = dirFromUv(tracks[i].u, tracks[i].v);
     }
+  }
+
+  /* How far out from a phantom's centre its own silhouette reaches, in the same
+     tangent units the view works in. The renderer erases out to this and no
+     further, so a person standing beside the one you are looking at keeps their
+     own fate. A little slack covers the feathered edge of the mask. */
+  function markRadius(tr) {
+    var halfW = (tr.w || 0.12) * MT[0];
+    var halfH = (tr.h || 0.2) * MT[1];
+    return Math.min(0.30, Math.max(0.05, Math.max(halfW, halfH) * 1.25));
   }
 
   function say(msg) { flash = msg; flashUntil = performance.now() + 1400; }
@@ -278,8 +322,8 @@
         tr.look = -1;
         shake = Math.min(0.012, shake + dt * 0.02);
       } else if (mag < BAND_OUT) {
-        w = Math.min(1, (mag - go) / (go * 0.7)) * (1 - Math.max(0, (mag - BAND_OUT * 0.62) / (BAND_OUT * 0.38)));
-        tr.charge = Math.min(1, tr.charge + Math.max(0.15, w) * rate * dt);
+        w = chargeWeight(mag);
+        tr.charge = Math.min(1, tr.charge + Math.max(0.12, w) * rate * dt);
         tr.look = 1;
         if (tr.charge >= 1) {
           banished++; level++;
@@ -298,6 +342,34 @@
 
   /* ---------- the bar you read through the lenses ---------- */
 
+  /* What share of the compass is actually done. The plain coverage figure is an
+     average over the whole sphere, so it can read high while a whole direction
+     behind you is still dark — which is the one thing "scan every angle" is
+     asking about. This counts directions instead. */
+  function angleCoverage() {
+    var c = VR.yawCover, n = c.length, k = 0, i;
+    for (i = 0; i < n; i++) if (c[i] >= 0.30) k++;
+    return n ? k / n : 0;
+  }
+
+  /* A ring of segments for the compass, rolled so the middle one is whatever
+     you are facing. "Scan every angle" is then a thing you can see yourself
+     doing: turn until no segment is dark. */
+  function drawCompass(c, W, y) {
+    var cover = VR.yawCover, n = cover.length;
+    var f = [-R[6], -R[7], -R[8]];
+    var here = Math.atan2(f[1], f[0]) / (Math.PI * 2) + 0.5;   // matches the plate's u
+    var x0 = 58, w = (W - 116) / n, i, k, v;
+    for (i = 0; i < n; i++) {
+      k = (Math.round(here * n) + i - (n >> 1) + n * 2) % n;
+      v = Math.min(1, cover[k] / 0.55);
+      c.fillStyle = v > 0.6 ? '#5ad1ff' : v > 0.25 ? 'rgba(90,209,255,0.45)' : 'rgba(255,255,255,0.12)';
+      c.fillRect(x0 + i * w + 1, y + (1 - v) * 9, w - 2, 4 + v * 14);
+    }
+    c.fillStyle = '#ffffff';
+    c.fillRect(W / 2 - 1.5, y - 7, 3, 5);
+  }
+
   function drawHud(now) {
     if (now - hudAt < 160) return;
     hudAt = now;
@@ -310,14 +382,16 @@
     c.arcTo(4, H - 4, 4, 4, r); c.arcTo(4, 4, W - 4, 4, r); c.closePath(); c.fill();
     c.textBaseline = 'middle';
     if (mode === 'scan') {
+      var done = angleCoverage() >= ANGLE_DONE;
       c.fillStyle = '#dfe9f5';
-      c.font = '600 27px ui-sans-serif, system-ui, sans-serif';
+      c.font = '600 25px ui-sans-serif, system-ui, sans-serif';
       c.textAlign = 'center';
-      c.fillText('Turn slowly. Nobody in front of you.', W / 2, 44);
-      c.fillStyle = 'rgba(255,255,255,0.14)';
-      c.fillRect(90, 82, W - 180, 14);
-      c.fillStyle = '#5ad1ff';
-      c.fillRect(90, 82, (W - 180) * Math.min(1, coverage / 0.42), 14);
+      c.fillText('Turn right round. Room must be empty.', W / 2, 34);
+      drawCompass(c, W, 62);
+      c.fillStyle = done ? '#7dffb0' : '#93a7bb';
+      c.font = '500 22px ui-sans-serif, system-ui, sans-serif';
+      c.fillText(done ? 'every angle covered — press Done'
+        : 'fill the dark gaps, then press Done', W / 2, 108);
     } else if (mode === 'play') {
       c.textAlign = 'left';
       c.fillStyle = '#9fb3c8';
@@ -421,11 +495,15 @@
     }
 
     if (mode === 'scan') {
-      /* Nobody sweeps the ceiling and the floor, so full coverage is never
-         coming. Enough of the band around the horizon is enough — and a room
-         too dark or too blank to ever reach it must not trap the player. */
-      if ((coverage >= SCAN_TARGET && now - scanStart > 6000) || now - scanStart > 25000) startPlay();
-      $('#scanPct').textContent = Math.round(Math.min(1, coverage / SCAN_TARGET) * 100) + '%';
+      /* The scan ends when the player says it does, not on a timer. They are
+         the ones who know whether they have turned all the way round, and
+         whether the room was empty while they did it. */
+      var ang = angleCoverage();
+      $('#scanPct').textContent = Math.round(ang * 100) + '%';
+      $('#scanHint').textContent = ang >= ANGLE_DONE
+        ? 'every angle covered'
+        : (now - scanStart > 9000 ? 'keep turning — some angles are still dark' : '');
+      $('#btnDone').classList.toggle('primary', ang >= ANGLE_DONE);
     }
     if (primeLeft > 0) primeLeft -= dt;
 
@@ -436,7 +514,11 @@
     if (mode === 'play') {
       tracks.forEach(function (tr) {
         if (!tr.dir || tr.age < 0.25 || tr.area < MIN_AREA) return;
-        marks.push({ dir: tr.dir, charge: tr.look < 0 ? -Math.max(0.12, tr.charge) : tr.charge });
+        marks.push({
+          dir: tr.dir,
+          charge: tr.look < 0 ? -Math.max(0.12, tr.charge) : tr.charge,
+          r: markRadius(tr)
+        });
       });
     }
 
@@ -445,6 +527,7 @@
       stereo: S.stereo && mode !== 'idle',
       k1: lens[0], k2: lens[1], lens: S.ipd,
       erase: mode === 'scan' ? 0 : S.erase * trust,
+      always: (mode === 'scan' || S.hide !== 'always') ? 0 : 1,
       gazeIn: GAZE_IN, gazeOut: gazeOut(),
       time: t, shake: shake, fade: fade,
       reticle: mode === 'idle' ? 0 : 1,
@@ -477,14 +560,17 @@
     }
   }
 
+  /* Give the pretend room a head start, but deliberately not a complete one:
+     the compass is left with gaps so that pressing Done is a real decision,
+     the way it is with a real camera. */
   function primeSweep() {
-    var steps = 150, i = 0;
+    var steps = 110, i = 0;
     primeLeft = 0.1;
     (function step() {
       if (i >= steps) { primeLeft = 0; return; }
       var f = i / steps;
-      yaw = f * Math.PI * 2 * 1.5;
-      pitch = Math.sin(f * Math.PI * 4) * 0.5;
+      yaw = f * Math.PI * 1.25;
+      pitch = Math.sin(f * Math.PI * 3) * 0.5;
       var Rp = VR.matFromYawPitch(yaw, pitch);
       VR.renderSim(Rp, 0, phantoms, false);
       VR.sense(Rp, { t0: 0.06, t1: 0.2, smooth: 0.5, slow: 0.35, fast: 0.7 });
@@ -634,7 +720,9 @@
     canvas.addEventListener('pointerup', function () {
       var n = performance.now();
       if (n - lastTap < 380) {
-        if (mode === 'over') startScan();
+        /* The same gesture the headset allows: done scanning, or done playing. */
+        if (mode === 'scan') startPlay();
+        else if (mode === 'over') startScan();
         else if (mode === 'play') endRound();
         lastTap = 0;
       } else lastTap = n;
@@ -662,7 +750,7 @@
     $('#btnRoom').addEventListener('click', startRoom);
     $('#btnQuit').addEventListener('click', quit);
     $('#btnRescan').addEventListener('click', startScan);
-    $('#btnSkip').addEventListener('click', function () { if (mode === 'scan') startPlay(); });
+    $('#btnDone').addEventListener('click', function () { if (mode === 'scan') startPlay(); });
     $('#btnAgain').addEventListener('click', startScan);
     $('#btnMenu').addEventListener('click', quit);
     $('#btnHow').addEventListener('click', function () {
@@ -689,6 +777,7 @@
     opt('#optLens', 'lens', String);
     opt('#optIpd', 'ipd', Number);
     opt('#optSens', 'sens', Number);
+    opt('#optHide', 'hide', String);
     opt('#optErase', 'erase', Number);
     $('#optStereo').checked = S.stereo;
     $('#optStereo').addEventListener('change', function () { S.stereo = $('#optStereo').checked; save(); });
@@ -710,6 +799,15 @@
       look: function (y, p) { yaw = y; pitch = p; },
       scan: startScan,
       play: startPlay,
+      /* A point in the mask, turned into the world direction it came from. */
+      dirFromMaskUv: dirFromUv,
+      /* Where a phantom is on the glass right now — for lining an overlay up,
+         or for checking that what is drawn there is what should be. */
+      project: function (dir, eye) {
+        var lens = LENS[S.lens] || LENS.light;
+        var stereo = S.stereo && mode !== 'idle';
+        return VR.project(R, dir, stereo ? (eye || 0) : null, lens[0], lens[1], S.ipd);
+      },
       state: function () {
         return {
           mode: mode, sim: simMode, coverage: coverage, lit: lit, trust: trust, stale: stale,
@@ -717,7 +815,7 @@
           banished: banished, timeLeft: timeLeft, gazeOut: gazeOut(),
           phantoms: phantoms.map(function (p) { return { yaw: p.yaw, pitch: p.pitch, size: p.size }; }),
           tracks: tracks.map(function (t) {
-            return { id: t.id, u: t.u, v: t.v, area: t.area, age: t.age, charge: t.charge, look: t.look || 0 };
+            return { id: t.id, u: t.u, v: t.v, dir: t.dir, area: t.area, age: t.age, charge: t.charge, look: t.look || 0 };
           })
         };
       }

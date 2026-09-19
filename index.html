@@ -20,7 +20,8 @@
 <section id="gate" class="screen">
   <div class="card">
     <h1>KEMOSH</h1>
-    <p class="tag">Put the phone in a Cardboard. Whatever you look at straight on stops being there.</p>
+    <p class="tag">Scan the empty room, press Done, and from then on the people in it
+      are invisible.</p>
 
     <div class="row">
       <button id="btnCam" class="primary">Use the camera</button>
@@ -32,14 +33,15 @@
     <button id="btnHow" class="link">How it is played</button>
     <div id="how" class="how" hidden>
       <ol>
-        <li><b>Scan.</b> Turn slowly on the spot with nobody in front of you. The phone
-          learns the empty room.</li>
-        <li><b>Hunt.</b> Phantoms are people the room doesn&rsquo;t account for. A ring marks
-          each one.</li>
-        <li><b>Do not look at them.</b> Hold a phantom just off to the side and its ring
-          fills. Full ring, banished, points.</li>
-        <li><b>Facing one unmakes it</b> &mdash; it dissolves, the ring empties, the streak
-          is gone. That is the whole difficulty.</li>
+        <li><b>Scan every angle.</b> Turn all the way round on the spot with nobody in
+          front of you. A compass shows which directions are still dark. When it&rsquo;s
+          filled in, press <b>Done</b>.</li>
+        <li><b>Now people are invisible.</b> Anyone who walks in front of you simply
+          isn&rsquo;t drawn &mdash; you see the room behind them.</li>
+        <li><b>Hunt what you cannot see.</b> A ring marks where each invisible person is.
+          Hold one off to the side and its ring fills. Full ring, banished, points.</li>
+        <li><b>Facing one erases even the ring</b> &mdash; nothing there at all, the lock
+          empties, the streak is gone. That is the whole difficulty.</li>
       </ol>
       <p class="fine">One camera means both eyes see the same picture. It sits right for
         turning your head, but it is not true depth.</p>
@@ -57,6 +59,12 @@
         <select id="optRot"><option value="0">0&deg;</option><option value="90">90&deg;</option><option value="180">180&deg;</option><option value="270">270&deg;</option></select>
       </label>
       <label><span>Spot people</span><input id="optSens" type="range" min="0.5" max="2.2" step="0.05"><output data-for="optSens"></output></label>
+      <label><span>Hide people</span>
+        <select id="optHide">
+          <option value="always">wherever they are</option>
+          <option value="gaze">only where I look</option>
+        </select>
+      </label>
       <label><span>How completely</span><input id="optErase" type="range" min="0" max="1" step="0.05"><output data-for="optErase"></output></label>
       <p class="fine">If the view looks rotated or squashed, it is <i>Camera turned</i> and
         <i>Camera width</i> that fix it. If nobody ever vanishes, raise <i>Spot people</i>
@@ -69,7 +77,8 @@
 <section id="scanBar" class="strip">
   <span class="dot"></span>
   <span>Learning the room &mdash; <b id="scanPct">0%</b></span>
-  <button id="btnSkip" class="link">start anyway</button>
+  <span id="scanHint" class="hint"></span>
+  <button id="btnDone" class="go">Done</button>
   <button id="btnQuit" class="link">quit</button>
 </section>
 

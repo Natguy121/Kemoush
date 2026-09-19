@@ -134,6 +134,24 @@ button.link {
 
 button.link:hover { background: none; color: var(--ink); }
 
+/* The Done button in the scanning bar: quiet until the room is actually
+   covered, then it lights up to say the scan is good enough. */
+button.go {
+  flex: 0 0 auto;
+  min-height: 0;
+  padding: 6px 16px;
+  border-radius: 999px;
+  font-size: 13px;
+}
+
+button.go.primary {
+  border-color: transparent;
+  background: linear-gradient(180deg, #7ddcff, var(--accent));
+  color: var(--accent-ink);
+}
+
+.hint { color: #ffc46b; }
+
 .note {
   margin: 0 0 10px;
   padding: 10px 12px;

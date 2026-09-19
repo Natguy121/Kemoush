@@ -220,9 +220,10 @@
     'uniform mat3 uR, uRinv;',
     'uniform mat2 uCamM;',
     'uniform vec2 uMaskTan, uEyeTan, uLens;',
-    'uniform float uK1, uK2, uErase, uGazeIn, uGazeOut, uTime, uShake, uFade;',
+    'uniform float uK1, uK2, uErase, uGazeIn, uGazeOut, uTime, uShake, uFade, uAlways;',
     'uniform float uReticle, uHudOn;',
     'uniform vec4 uMarks[8];',
+    'uniform float uMarkR[8];',
     'uniform int uMarkN;',
     'void main(){',
     '  vec2 p = (vUv*2.0-1.0) - uLens;',
@@ -256,20 +257,27 @@
     '    vec2 mt = md.xy / -md.z;',
     '    vec2 v = t - mt;',
     '    float dist = length(v);',
+    '    float centred = 1.0 - smoothstep(uGazeOut*0.55, uGazeOut, length(mt));',
     /* A person goes as a person. Gate on where the phantom is, not where this
-       pixel is, or looking at someone punches a hole and leaves the rest. */
-    '    if (dist < 0.42) whole = max(whole, 1.0 - smoothstep(uGazeOut*0.55, uGazeOut, length(mt)));',
+       pixel is, or looking at someone punches a hole and leaves the rest. The
+       reach is that person's own size: a fixed radius would take everyone
+       standing near them along too. */
+    '    if (dist < uMarkR[i]) whole = max(whole, centred);',
     '    float ch = uMarks[i].w;',
-    '    float R = 0.085 + 0.012*sin(uTime*4.0);',
+    '    float R = clamp(uMarkR[i]*0.95, 0.045, 0.2) + 0.010*sin(uTime*4.0);',
     '    float ring = smoothstep(0.012, 0.0, abs(dist - R));',
     '    float a = atan(v.x, v.y)/TAU + 0.5;',
     '    float arc = (a < abs(ch)) ? smoothstep(0.02, 0.0, abs(dist - R*0.78)) : 0.0;',
     '    vec3 tint = ch < 0.0 ? vec3(1.0,0.32,0.28) : mix(vec3(0.45,0.85,1.0), vec3(0.6,1.0,0.7), abs(ch));',
-    '    ringCol += tint * (ring*0.55 + arc*0.9);',
+    /* Turn to face one and even the ring goes: looked at straight on, there is
+       nothing there at all, not so much as a mark saying where. */
+    '    ringCol += tint * (ring*0.55 + arc*0.9) * (1.0 - centred);',
     '  }',
-    /* Anything not yet tracked still fades where you stare, so the effect never
-       waits on the tracker to catch up. */
-    '  float gaze = max(whole, 1.0 - smoothstep(uGazeIn, uGazeOut, ang));',
+    /* uAlways is the whole point of the scan: once the room is known, people are
+       simply not drawn, wherever they stand. Dropped to zero it reverts to
+       hiding only what you look at. Anything the tracker has not caught up with
+       still fades where you stare, so the effect never waits on it. */
+    '  float gaze = max(uAlways, max(whole, 1.0 - smoothstep(uGazeIn, uGazeOut, ang)));',
     '  float erase = clamp(m * gaze * uErase, 0.0, 1.0);',
     /* Dissolve rather than cut: a hard swap between two images reads as a glitch,
        a noisy wipe reads as something being taken away. */
@@ -277,7 +285,10 @@
     '  float e = clamp(erase*1.7 - n*0.45 - 0.05, 0.0, 1.0);',
     '  e = smoothstep(0.0, 0.5, e);',
     '  vec3 col = mix(base, empty, e);',
-    '  col += vec3(0.25,0.75,0.95) * e*(1.0-e) * 2.2 * m;',
+    /* A rim where the dissolve is half-done sells the unmaking when you turn to
+       face someone. When they are meant to be simply absent it would give their
+       position away, so it drops to a whisper. */
+    '  col += vec3(0.25,0.75,0.95) * e*(1.0-e) * mix(2.2, 0.3, uAlways) * m;',
     '  col += ringCol;',
     /* Centre mark: where looking becomes erasing. */
     '  float gr = smoothstep(0.005, 0.0, abs(ang - uGazeOut));',
@@ -633,12 +644,18 @@
       var eyes = o.stereo ? 2 : 1;
       var vpW = o.stereo ? Math.floor(W / 2) : W;
       var et = eyeTan(vpW, H);
-      var arr = new Float32Array(32), i, n = Math.min(8, o.marks.length);
+      /* The game needs this: how far off centre a thing can be and still be on
+         screen. In stereo each eye sees a narrow slice, and rules written in
+         degrees without knowing that end up pointing outside the view. */
+      this.lastEyeTan = et;
+      var arr = new Float32Array(32), rad = new Float32Array(8);
+      var i, n = Math.min(8, o.marks.length);
       for (i = 0; i < n; i++) {
         arr[i * 4] = o.marks[i].dir[0];
         arr[i * 4 + 1] = o.marks[i].dir[1];
         arr[i * 4 + 2] = o.marks[i].dir[2];
         arr[i * 4 + 3] = o.marks[i].charge;
+        rad[i] = o.marks[i].r || 0.12;
       }
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       gl.useProgram(prog.view.p);
@@ -654,6 +671,7 @@
       gl.uniform1f(prog.view.u.uK1, o.stereo ? o.k1 : 0);
       gl.uniform1f(prog.view.u.uK2, o.stereo ? o.k2 : 0);
       gl.uniform1f(prog.view.u.uErase, o.erase);
+      gl.uniform1f(prog.view.u.uAlways, o.always || 0);
       gl.uniform1f(prog.view.u.uGazeIn, o.gazeIn);
       gl.uniform1f(prog.view.u.uGazeOut, o.gazeOut);
       gl.uniform1f(prog.view.u.uTime, o.time);
@@ -662,6 +680,7 @@
       gl.uniform1f(prog.view.u.uReticle, o.reticle == null ? 1 : o.reticle);
       gl.uniform1f(prog.view.u.uHudOn, o.hud ? 1 : 0);
       gl.uniform4fv(prog.view.u.uMarks, arr);
+      gl.uniform1fv(prog.view.u.uMarkR, rad);
       gl.uniform1i(prog.view.u.uMarkN, n);
       for (i = 0; i < eyes; i++) {
         gl.viewport(i * vpW, 0, vpW, H);
@@ -671,12 +690,46 @@
       }
     },
 
+    /* Where a world direction lands on the canvas, in pixels. The lens warp has
+       to be undone to answer that, and the polynomial has no neat inverse, so
+       it is walked back by repeated substitution — a handful of rounds is well
+       inside a pixel at these strengths. */
+    project: function (R, dir, eye, k1, k2, lensOff) {
+      var W = canvas.width, H = canvas.height;
+      var stereo = eye != null;
+      var vpW = stereo ? Math.floor(W / 2) : W;
+      var et = eyeTan(vpW, H);
+      var ds = mat3MulVec(mat3T(R), dir);
+      if (ds[2] > -0.05) return null;
+      var pd = [ds[0] / -ds[2] / et[0], ds[1] / -ds[2] / et[1]];
+      var p = [pd[0], pd[1]], i, r2, f;
+      if (stereo && (k1 || k2)) {
+        for (i = 0; i < 6; i++) {
+          r2 = p[0] * p[0] + p[1] * p[1];
+          f = 1 + k1 * r2 + k2 * r2 * r2;
+          p = [pd[0] / f, pd[1] / f];
+        }
+      }
+      var off = stereo ? (eye === 0 ? lensOff : -lensOff) : 0;
+      return {
+        x: (eye || 0) * vpW + ((p[0] + off) * 0.5 + 0.5) * vpW,
+        y: (1 - ((p[1] * 0.5) + 0.5)) * H,   // canvas y grows downward
+        glY: ((p[1] * 0.5) + 0.5) * H,
+        inView: Math.abs(p[0] + off) < 1 && Math.abs(p[1]) < 1
+      };
+    },
+
     readMask: function () {
       gl.bindFramebuffer(gl.FRAMEBUFFER, fbo.maskC);
       gl.readPixels(0, 0, MASK_W, MASK_H, gl.RGBA, gl.UNSIGNED_BYTE, maskBuf);
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       return maskBuf;
     },
+
+    /* How well each slice of the compass has been painted, 0..1 per column,
+       so the scan can say which way is still missing rather than only how far
+       along it is. Filled in by coverage(). */
+    yawCover: new Float32Array(COV_W),
 
     /* How much of the sphere has been painted, 0..1. */
     coverage: function () {
@@ -689,14 +742,20 @@
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       /* Weight each row by how much sphere it covers, or the poles would
          flatter us: they are a lot of texels and hardly any room. */
-      var sum = 0, wsum = 0, x, y, w, row;
+      var sum = 0, wsum = 0, x, y, w, row, v;
+      for (x = 0; x < COV_W; x++) this.yawCover[x] = 0;
       for (y = 0; y < COV_H; y++) {
         w = Math.cos((y + 0.5) / COV_H * Math.PI - Math.PI / 2);
         row = 0;
-        for (x = 0; x < COV_W; x++) row += covBuf[(y * COV_W + x) * 4 + 3] / 255;
+        for (x = 0; x < COV_W; x++) {
+          v = covBuf[(y * COV_W + x) * 4 + 3] / 255;
+          row += v;
+          this.yawCover[x] += v * w;
+        }
         sum += (row / COV_W) * w;
         wsum += w;
       }
+      if (wsum) for (x = 0; x < COV_W; x++) this.yawCover[x] /= wsum;
       return wsum ? sum / wsum : 0;
     },
 
