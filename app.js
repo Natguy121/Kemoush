@@ -342,9 +342,11 @@
         : 'fill the dark gaps, then press Done', W / 2, 108);
     } else if (mode === 'live') {
       c.textAlign = 'center';
-      if (stale > 1.5) {
-        /* It no longer relearns by itself once Done has been pressed, so say
-           what is actually true and what the way out of it is. */
+      /* Only worth saying when the camera is the thing being drawn. Among
+         blocks nothing live is on screen, so a plate that no longer matches the
+         room costs nothing and there is nothing to warn about — it was sitting
+         there telling people to redo a scan that was perfectly good. */
+      if (stale > 1.5 && S.view !== 'blocks') {
         c.fillStyle = '#ffc46b';
         c.font = '600 25px ui-sans-serif, system-ui, sans-serif';
         c.fillText('the room has changed — press rescan', W / 2, 40);

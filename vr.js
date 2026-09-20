@@ -29,6 +29,7 @@
   var camSource = null;          // HTMLVideoElement, or null in sim mode
   var simOn = false;
   var hasDepth = false;          // has anything actually measured the room?
+  var lumaMid = 0.45, lumaSpread = 0.18;   // how bright this room is, measured
   var maskBuf = new Uint8Array(MASK_W * MASK_H * 4);
   var covBuf = new Uint8Array(COV_W * COV_H * 4);
 
@@ -215,11 +216,17 @@
     'in vec2 vUv; out vec4 o;',
     'uniform sampler2D uSrc;',
     'uniform vec2 uStep;',
+    /* Confidence in the alpha, and how bright the room is in the red, because
+       relief has to be judged against the room's own brightness rather than
+       against a number chosen in advance. */
     'void main(){',
-    '  float s = 0.0;',
-    '  for (int y=0; y<4; y++) for (int x=0; x<4; x++)',
-    '    s += texture(uSrc, vUv + (vec2(float(x),float(y))-1.5)*uStep).a;',
-    '  o = vec4(s/16.0);',
+    '  float s = 0.0, l = 0.0;',
+    '  for (int y=0; y<4; y++) for (int x=0; x<4; x++){',
+    '    vec4 t = texture(uSrc, vUv + (vec2(float(x),float(y))-1.5)*uStep);',
+    '    s += t.a;',
+    '    l += dot(t.rgb, vec3(0.299,0.587,0.114));',
+    '  }',
+    '  o = vec4(l/16.0, 0.0, 0.0, s/16.0);',
     '}'
   ].join('\n');
 
@@ -236,6 +243,7 @@
     'uniform vec2 uMaskTan, uEyeTan, uLens;',
     'uniform float uK1, uK2, uErase, uGazeIn, uGazeOut, uTime, uShake, uFade, uAlways;',
     'uniform float uReticle, uHudOn, uBlocks, uCell, uVig, uRelief, uReliefGrid;',
+    'uniform float uLumaMid, uLumaSpread;',
     /* Each tracked person: direction in xyz, their own erase radius in w. */
     'uniform vec4 uMarks[8];',
     'uniform int uMarkN;',
@@ -307,7 +315,13 @@
     'float cellPull(vec4 pl){',
     '  float a = smoothstep(0.05, 0.55, pl.a);',
     '  float l = dot(pl.rgb, vec3(0.299,0.587,0.114));',
-    '  return floor(clamp((l - 0.16) * 2.0, 0.0, 1.0) * a * (uRelief + 0.999));',
+    /* Judged against how bright this room actually is, not against a fixed
+       number. Measuring it absolutely worked only for a room of roughly the
+       brightness it was tuned on: a white room sat past the top of the range,
+       every column was pushed the same maximum amount, and maximum everywhere
+       draws exactly like flat everywhere — a smooth empty box. */
+    '  float t = (l - uLumaMid) / max(uLumaSpread, 0.02) * 0.5 + 0.5;',
+    '  return floor(clamp(t, 0.0, 1.0) * a * (uRelief + 0.999));',
     '}',
 
     'vec3 blockRoom(vec3 d){',
@@ -481,22 +495,27 @@
     '  vec3 p = d*t;',
     '  vec3 c;',
     '  if (abs(tv.z) <= abs(tv.x) && abs(tv.z) <= abs(tv.y)) {',
+    /* A bright room, because that is what most rooms are: white walls, a pale
+       tiled floor, dark things standing against them. A mid-grey pretend room
+       hid a fault for a long time — the relief was being judged against a fixed
+       brightness, so a real white room sat past the top of the range and came
+       out perfectly flat, and nothing here was bright enough to show it. */
     '    if (d.z < 0.0) {',
     '      vec2 g = fract(p.xy*1.1);',
     '      float line = smoothstep(0.045,0.0,min(min(g.x,g.y),min(1.0-g.x,1.0-g.y)));',
-    '      c = mix(vec3(0.20,0.19,0.18), vec3(0.30,0.28,0.26), line);',
+    '      c = mix(vec3(0.62,0.60,0.57), vec3(0.50,0.48,0.45), line);',
     '    } else {',
     '      float lamp = smoothstep(1.5, 0.35, length(p.xy - vec2(0.0,1.2)));',
-    '      c = mix(vec3(0.46,0.46,0.48), vec3(0.95,0.93,0.86), lamp);',
+    '      c = mix(vec3(0.80,0.80,0.81), vec3(0.97,0.96,0.92), lamp);',
     '    }',
     '  } else {',
     '    vec2 w = (abs(tv.x) < abs(tv.y)) ? vec2(p.y,p.z) : vec2(p.x,p.z);',
     '    float band = smoothstep(0.06,0.0,abs(w.y+0.15));',
     '    float stripe = 0.5+0.5*sin(w.x*5.4);',
-    '    c = mix(vec3(0.40,0.36,0.31), vec3(0.47,0.43,0.37), stripe);',
-    '    c = mix(c, vec3(0.24,0.22,0.20), band);',
+    '    c = mix(vec3(0.82,0.81,0.78), vec3(0.88,0.87,0.84), stripe);',
+    '    c = mix(c, vec3(0.55,0.53,0.50), band);',
     '    vec2 q = abs(vec2(mod(w.x+1.5,3.0)-1.5, w.y-0.45)) - vec2(0.42,0.30);',
-    '    if (max(q.x,q.y) < 0.0) c = vec3(0.16,0.30,0.38) + 0.10*sin(w.x*11.0);',
+    '    if (max(q.x,q.y) < 0.0) c = vec3(0.26,0.38,0.46) + 0.10*sin(w.x*11.0);',
     '  }',
     '  c *= 0.82 + 0.18*hash21(floor(p.xy*90.0)+floor(p.z*90.0));',
     '  return c;',
@@ -883,6 +902,10 @@
       gl.uniform1f(prog.view.u.uCell, o.cell || 0.1);
       gl.uniform1f(prog.view.u.uRelief, o.relief || 2);
       gl.uniform1f(prog.view.u.uReliefGrid, o.reliefGrid || 1);
+      /* What "bright" means in this particular room, so the relief is judged
+         against the room rather than against a number picked in a dim one. */
+      gl.uniform1f(prog.view.u.uLumaMid, lumaMid);
+      gl.uniform1f(prog.view.u.uLumaSpread, lumaSpread);
       gl.uniform4fv(prog.view.u.uMarks, arr);
       gl.uniform1i(prog.view.u.uMarkN, n);
       for (i = 0; i < eyes; i++) {
@@ -959,8 +982,34 @@
         wsum += w;
       }
       if (wsum) for (x = 0; x < COV_W; x++) this.yawCover[x] /= wsum;
+
+      /* How bright this room is, and by how much it varies — over the parts
+         actually scanned, since unscanned plate is still blank white and would
+         drag the answer towards a room nobody has seen. */
+      var ls = 0, ln = 0, li, lv;
+      for (li = 0; li < COV_W * COV_H; li++) {
+        if (covBuf[li * 4 + 3] < 90) continue;
+        ls += covBuf[li * 4] / 255; ln++;
+      }
+      if (ln > 8) {
+        lumaMid = ls / ln;
+        var dev = 0;
+        for (li = 0; li < COV_W * COV_H; li++) {
+          if (covBuf[li * 4 + 3] < 90) continue;
+          lv = covBuf[li * 4] / 255;
+          dev += Math.abs(lv - lumaMid);
+        }
+        /* Widened a little: mean deviation of a coarse average understates how
+           much a real wall varies close up, and too narrow a spread would put
+           every column at one end of the range or the other. */
+        lumaSpread = Math.max(0.05, (dev / ln) * 2.6);
+      }
       return wsum ? sum / wsum : 0;
     },
+
+    /* What the room's brightness was measured to be, for anything that needs
+       to reason about it. */
+    plateLuma: function () { return { mid: lumaMid, spread: lumaSpread }; },
 
     resize: function () {
       var d = Math.min(global.devicePixelRatio || 1, 2);

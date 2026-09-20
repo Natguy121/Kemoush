@@ -98,9 +98,12 @@ wall directions in between. That flat per-face shading is most of what says
 "cube" to the eye.
 
 Cubes don't all sit flush with the wall. Each column stands proud of it by a
-whole number of cubes, taken from how bright that part of the room is — so
-what's in the room comes out as relief stacked on the walls rather than as a
-picture painted on them. How deep that relief goes is set as a real depth, not
+whole number of cubes, taken from how bright that part of the room is **compared
+with the rest of that room** — not against a fixed number. Judging it absolutely
+only worked for a room of roughly the brightness it was tuned on: a white room
+sat past the top of the range, so every column got pushed the same maximum
+amount, and maximum everywhere draws exactly like flat everywhere. A bright room
+came out as a smooth empty box. How deep that relief goes is set as a real depth, not
 a number of cubes, so making the cubes smaller makes the detail finer instead
 of flattening the room.
 
