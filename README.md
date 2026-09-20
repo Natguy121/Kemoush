@@ -39,7 +39,10 @@ same pipeline — so you scan it the same way.
    stays. A compass along the bottom of the view shows which directions are
    still blank. Nothing is on a clock; it waits for you.
 3. **Press Done.** The scan ends when you say so. Inside the headset, a
-   double-tap on the case does the same thing.
+   double-tap on the case does the same thing. **Done stops the learning**: the
+   room is then kept exactly as you scanned it. It won't drift towards a room
+   that has since changed, and a direction you never scanned stays blank rather
+   than filling itself in later. *Rescan* is how you ask for a new one.
 4. **You are now standing in a blocky model of your room.** Anyone who walks in
    is not in that model, so they never appear.
 
@@ -75,7 +78,15 @@ wall directions in between. That flat per-face shading is most of what says
 Cubes don't all sit flush with the wall. Each column stands proud of it by a
 whole number of cubes, taken from how bright that part of the room is — so
 what's in the room comes out as relief stacked on the walls rather than as a
-picture painted on them.
+picture painted on them. How deep that relief goes is set as a real depth, not
+a number of cubes, so making the cubes smaller makes the detail finer instead
+of flattening the room.
+
+The heights themselves come off a **coarser lattice than the cubes** — a few
+cubes to a step. Taking a height per cube let the grain of the wall, and the
+camera's own speckle, flip single cubes in and out; the result read as static
+rather than as a room. Coarse heights with fine cubes give terraces: the shape
+stays architectural while the surface keeps its detail.
 
 Two things keep this cheap enough for a phone. A headset viewer only ever turns,
 never walks, so the whole block world is a function of direction alone and a ray
@@ -124,9 +135,9 @@ Worth knowing before it surprises you:
   head correctly when you turn, but there is no real depth — near things don't
   sit nearer. It is comfortable enough; it isn't true stereo.
 - **Turning is fine, walking is not.** The plate assumes your head rotates about
-  roughly one point. Take three steps and everything shifts against it, the room
-  stops matching, and it knows: it stops trusting the difference and repaints,
-  which you'll see as *the room changed — relearning it*.
+  roughly one point. Take three steps and everything shifts against it and the
+  room stops matching. It knows, and says so — *the room has changed — press
+  rescan* — but it will not quietly rebuild itself, because Done means done.
 - **Anyone standing still during the scan gets built into the room**, and then it
   thinks they're furniture. This is why the scan asks for an empty room and why
   Done is yours to press: don't press it until everyone is out of shot. They'll
@@ -141,6 +152,7 @@ Everything below is in **Settings** on the start screen.
 | What you see | What to change |
 |---|---|
 | The room stays white | Keep turning — and check **Camera turned** below |
+| A patch stayed white after Done | It was never scanned. *Rescan* and cover it |
 | Cubes too coarse, or too fine to read | **Block size** |
 | You want the real picture instead | **Show** → *the camera* |
 | The view is sideways, or squashed | **Camera turned** — try 90°, then 270° |
@@ -153,8 +165,8 @@ The last three settings — **Spot people**, **Hide people** and **How completel
 so there is nothing to hide.
 
 If the picture starts coming apart, that's the safety valve saying the plate no
-longer matches the room. It stops trusting it and repaints. Press *rescan* to do
-it deliberately.
+longer matches the room. It stops trusting the difference, and since Done
+stopped the learning, *rescan* is what puts it right.
 
 ## The files
 

@@ -232,7 +232,7 @@
     'uniform mat2 uCamM;',
     'uniform vec2 uMaskTan, uEyeTan, uLens;',
     'uniform float uK1, uK2, uErase, uGazeIn, uGazeOut, uTime, uShake, uFade, uAlways;',
-    'uniform float uReticle, uHudOn, uBlocks, uCell, uVig;',
+    'uniform float uReticle, uHudOn, uBlocks, uCell, uVig, uRelief, uReliefGrid;',
     /* Each tracked person: direction in xyz, their own erase radius in w. */
     'uniform vec4 uMarks[8];',
     'uniform int uMarkN;',
@@ -282,42 +282,55 @@
        Whole numbers only — a smooth height would give a lumpy surface, and
        stacked cubes are the entire point. Unscanned columns stand at zero, so
        the room starts out a flat white box and gains its relief as it is
-       learned. */
+       learned. Counted in cells but set in real depth (uRelief cells' worth),
+       so shrinking the cubes makes the relief finer rather than shallower. */
     'float cellPull(vec4 pl){',
     '  float a = smoothstep(0.05, 0.55, pl.a);',
     '  float l = dot(pl.rgb, vec3(0.299,0.587,0.114));',
-    '  return floor(clamp((l - 0.16) * 2.0, 0.0, 1.0) * a * 2.999);',
+    '  return floor(clamp((l - 0.16) * 2.0, 0.0, 1.0) * a * (uRelief + 0.999));',
     '}',
 
     'vec3 blockRoom(vec3 d){',
     '  float cs = uCell;',
     '  float wall = roomDist(d);',
-    /* Start three cells short of the wall: nothing can stand proud of it by
-       more than that, and never nearer than a third of the way in, so the cell
-       centres stay well away from the origin where normalize() would give up. */
-    '  float t0 = max(wall * 0.38, wall - 3.0*cs);',
+    /* Start just in front of this direction's own surface, not in front of the
+       deepest relief anywhere in the room. With small cubes the worst case is
+       many cells back, and marching from there would spend a texture read per
+       cell on every flat stretch of wall. Two cells of slack is enough to catch
+       a taller neighbour standing in the way. Never nearer than part-way in
+       either, so cell centres stay away from the origin where normalize() gives
+       up. */
+    '  float here = cellPull(texture(uPano, panoFromDir(d)));',
+    '  float t0 = max(wall * 0.40, wall - (here + 3.0)*cs);',
     '  ivec3 c = ivec3(floor(d * t0 / cs));',
     '  bvec3 tiny = lessThan(abs(d), vec3(1e-5));',
     '  vec3 dsf = mix(d, vec3(1.0), vec3(tiny));',
     '  vec3 sgn = step(vec3(0.0), d)*2.0 - 1.0;',
     '  vec3 tMax = mix((vec3(c) + step(vec3(0.0), d)) * cs / dsf, vec3(1e9), vec3(tiny));',
     '  vec3 tDelta = mix(cs / abs(dsf), vec3(1e9), vec3(tiny));',
-    '  vec4 pl = vec4(0.0);',
     '  bool found = false;',
-    /* Walk the lattice. A cell is solid once it lies at or beyond its own
-       column's surface, so corners and the join between walls come out right
-       without any special case. */
-    '  for (int i = 0; i < 12; i++) {',
+    /* Walk the lattice. A cell is solid once it lies at or beyond the surface
+       of the column it belongs to, so corners and the join between walls come
+       out right without any special case.
+
+       How far that column stands proud is read off a coarser lattice than the
+       cubes themselves — uReliefGrid cubes to a step. Taking a height per cube
+       instead let the grain of the wall, and the camera's own speckle, flip
+       single cubes in and out, which came out as static rather than as a room.
+       Coarse heights and fine cubes give terraces: the shape stays
+       architectural while the surface stays detailed. */
+    '  for (int i = 0; i < 10; i++) {',
     '    vec3 centre = (vec3(c) + 0.5) * cs;',
-    '    vec3 cdir = normalize(centre);',
-    '    pl = texture(uPano, panoFromDir(cdir));',
-    '    float rd = roomDist(cdir);',
-    '    if (length(centre) >= max(rd - cellPull(pl)*cs, rd*0.4)) { found = true; break; }',
+    '    float rd = roomDist(normalize(centre));',
+    '    vec3 step3 = (floor(vec3(c) / uReliefGrid) + 0.5) * uReliefGrid * cs;',
+    '    float pull = cellPull(texture(uPano, panoFromDir(normalize(step3))));',
+    '    if (length(centre) >= max(rd - pull*cs, rd*0.4)) { found = true; break; }',
     '    if (tMax.x < tMax.y && tMax.x < tMax.z) { c.x += int(sgn.x); tMax.x += tDelta.x; }',
     '    else if (tMax.y < tMax.z) { c.y += int(sgn.y); tMax.y += tDelta.y; }',
     '    else { c.z += int(sgn.z); tMax.z += tDelta.z; }',
     '  }',
-    '  if (!found) pl = texture(uPano, panoFromDir(normalize((vec3(c) + 0.5) * cs)));',
+    /* Colour comes from the cube's own direction, at full detail. */
+    '  vec4 pl = texture(uPano, panoFromDir(normalize((vec3(c) + 0.5) * cs)));',
     /* Which face of that cube the ray came in through — the flat shading this
        gives is most of what says "cube" to the eye. */
     '  vec3 cmin = vec3(c) * cs;',
@@ -743,6 +756,11 @@
       gl.uniform2f(prog.clean.u.uTexel, 1 / MASK_W, 1 / MASK_H);
       draw();
 
+      /* Frozen: the room stands as it was scanned, so there is nothing to paint
+         and the whole pass can be skipped. The mask still runs — it compares the
+         camera against the plate, which is exactly as valid frozen as not. */
+      if (opts.freeze) return;
+
       var pnext = 1 - panoIdx;
       target(fbo.pano[pnext], PANO_W, PANO_H);
       gl.useProgram(prog.paint.p);
@@ -803,8 +821,11 @@
       gl.uniform1f(prog.view.u.uBlocks, o.blocks ? 1 : 0);
       /* Only a lens needs its edge hidden. */
       gl.uniform1f(prog.view.u.uVig, o.stereo ? 0.42 : 0.88);
-      /* Cube edge, in units of the room box — which spans -1..1 across. */
+      /* Cube edge, in units of the room box — which spans -1..1 across — and
+         how many of those cubes deep the relief on the walls may stand. */
       gl.uniform1f(prog.view.u.uCell, o.cell || 0.1);
+      gl.uniform1f(prog.view.u.uRelief, o.relief || 2);
+      gl.uniform1f(prog.view.u.uReliefGrid, o.reliefGrid || 1);
       gl.uniform4fv(prog.view.u.uMarks, arr);
       gl.uniform1i(prog.view.u.uMarkN, n);
       for (i = 0; i < eyes; i++) {

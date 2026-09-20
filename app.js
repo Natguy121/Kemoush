@@ -23,7 +23,7 @@
     erase: 1.0,     // how completely they go
     hide: 'always', // 'always' — invisible wherever they stand; 'gaze' — only what you look at
     view: 'blocks', // 'blocks' — the scanned room rebuilt as cubes; 'camera' — live passthrough
-    grid: 20,       // cubes across the room
+    grid: 80,       // cubes across the room
     stereo: true
   };
   var S = Object.assign({}, DEF);
@@ -31,6 +31,11 @@
     var saved = JSON.parse(localStorage.getItem('kemosh') || '{}');
     Object.keys(DEF).forEach(function (k) { if (saved[k] !== undefined) S[k] = saved[k]; });
   } catch (e) { /* first run, or storage is off; defaults are fine */ }
+  /* Someone who used this before has a cube size saved that no longer exists.
+     Left alone it would both render a room of the wrong coarseness and leave
+     the settings menu showing a blank. */
+  var GRIDS = [48, 80, 120];
+  if (GRIDS.indexOf(S.grid) < 0) S.grid = DEF.grid;
   function save() { try { localStorage.setItem('kemosh', JSON.stringify(S)); } catch (e) {} }
 
   var LENS = { off: [0, 0], light: [0.16, 0.10], strong: [0.34, 0.24] };
@@ -338,13 +343,15 @@
     } else if (mode === 'live') {
       c.textAlign = 'center';
       if (stale > 1.5) {
+        /* It no longer relearns by itself once Done has been pressed, so say
+           what is actually true and what the way out of it is. */
         c.fillStyle = '#ffc46b';
         c.font = '600 25px ui-sans-serif, system-ui, sans-serif';
-        c.fillText('the room changed — relearning it', W / 2, 40);
+        c.fillText('the room has changed — press rescan', W / 2, 40);
       } else {
         c.fillStyle = '#93a7bb';
         c.font = '500 24px ui-sans-serif, system-ui, sans-serif';
-        c.fillText(S.view === 'blocks' ? 'the room, rebuilt in blocks'
+        c.fillText(S.view === 'blocks' ? 'the room as you scanned it'
           : (S.hide === 'always' ? 'people are invisible' : 'look away to hide them'), W / 2, 40);
       }
     }
@@ -382,17 +389,20 @@
       t0: 0.055 / S.sens,
       t1: 0.20 / S.sens,
       smooth: scanning ? 0.5 : 0.35,
-      /* A stale plate is repainted briskly; a good one drifts slowly so a
-         person standing still does not fade into the wallpaper.
+      /* Done means done: once the scan is over the room is left exactly as it
+         was learned. It will not creep towards a room that has since changed,
+         and a direction never scanned stays blank rather than quietly filling
+         itself in later. Rescan is how you ask for a new one.
 
-         Building the room out of blocks is the thing worth watching, so a
-         direction seen for the first time arrives over about a second of
-         dwelling — some sixty frames, sixty looks at it — rather than in three.
-         A turn on the spot still leaves every direction well past the point of
-         no return, because it holds each one in view for far longer than that.
-         The camera view has nothing to watch, so it takes the plate as fast as
-         it can get it. */
-      slow: scanning ? (blocks ? 0.05 : 0.16) : (stale > 1.5 ? 0.14 : 0.018),
+         While scanning, building the room out of blocks is the thing worth
+         watching, so a direction seen for the first time arrives over about a
+         second of dwelling — some sixty frames, sixty looks at it — rather than
+         in three. A turn on the spot still leaves every direction well past the
+         point of no return, because it holds each one in view for far longer
+         than that. The camera view has nothing to watch, so it takes the plate
+         as fast as it can get it. */
+      freeze: mode === 'live',
+      slow: blocks ? 0.05 : 0.16,
       fast: blocks ? 0.06 : 0.55
     });
 
@@ -436,6 +446,9 @@
     }
 
     var lens = LENS[S.lens] || LENS.light;
+    /* Never let a cube size the renderer can't use get through — a zero would
+       divide the whole lattice by nothing and take the view with it. */
+    var grid = GRIDS.indexOf(S.grid) >= 0 ? S.grid : DEF.grid;
     VR.present(R, {
       stereo: S.stereo && mode !== 'idle',
       k1: lens[0], k2: lens[1], lens: S.ipd,
@@ -448,7 +461,14 @@
       reticle: (!blocks && mode === 'live') ? 1 : 0,
       hud: mode !== 'idle',
       blocks: blocks,
-      cell: 2.0 / S.grid,
+      cell: 2.0 / grid,
+      /* Relief is set as a real depth and converted to cubes, so making the
+         cubes smaller makes the detail finer instead of flattening the room.
+         Its steps stay on a lattice of about twenty across however fine the
+         cubes get, which keeps the room's shape steady while its surface
+         gains detail. */
+      relief: Math.min(8, Math.max(1, Math.round(0.16 * grid / 2.0))),
+      reliefGrid: Math.max(1, Math.round(grid / 20)),
       marks: marks
     });
 
