@@ -383,14 +383,17 @@
       t1: 0.20 / S.sens,
       smooth: scanning ? 0.5 : 0.35,
       /* A stale plate is repainted briskly; a good one drifts slowly so a
-         person standing still does not fade into the wallpaper. */
-      /* Building the room out of blocks is something to watch, so a direction
-         seen for the first time arrives over about half a second of dwelling
-         rather than in three frames — and at one steady rate, so a half-built
-         wall is halfway to its colour rather than confidently wrong. The camera
-         view has nothing to watch, so it takes the plate as fast as it can. */
+         person standing still does not fade into the wallpaper.
+
+         Building the room out of blocks is the thing worth watching, so a
+         direction seen for the first time arrives over about a second of
+         dwelling — some sixty frames, sixty looks at it — rather than in three.
+         A turn on the spot still leaves every direction well past the point of
+         no return, because it holds each one in view for far longer than that.
+         The camera view has nothing to watch, so it takes the plate as fast as
+         it can get it. */
       slow: scanning ? (blocks ? 0.05 : 0.16) : (stale > 1.5 ? 0.14 : 0.018),
-      fast: blocks ? 0.14 : 0.55
+      fast: blocks ? 0.06 : 0.55
     });
 
     if (frame % 12 === 0) coverage = VR.coverage();
@@ -454,7 +457,6 @@
   }
 
   function updateDom() {
-    $('#mSeen').textContent = tracks.filter(function (t) { return t.matched && t.age > 0.25; }).length;
     $('#mCov').textContent = Math.round(coverage * 100) + '%';
   }
 

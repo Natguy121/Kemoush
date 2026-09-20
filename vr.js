@@ -232,7 +232,7 @@
     'uniform mat2 uCamM;',
     'uniform vec2 uMaskTan, uEyeTan, uLens;',
     'uniform float uK1, uK2, uErase, uGazeIn, uGazeOut, uTime, uShake, uFade, uAlways;',
-    'uniform float uReticle, uHudOn, uBlocks, uCell;',
+    'uniform float uReticle, uHudOn, uBlocks, uCell, uVig;',
     /* Each tracked person: direction in xyz, their own erase radius in w. */
     'uniform vec4 uMarks[8];',
     'uniform int uMarkN;',
@@ -417,8 +417,13 @@
     '      col = mix(col, hud.rgb, hud.a);',
     '    }',
     '  }',
-    '  float vig = 1.0 - smoothstep(0.55, 1.25, length(p));',
-    '  col *= mix(0.25, 1.0, vig);',
+    /* The vignette is there to hide the rectangular edge of the screen behind a
+       round lens. Without a headset there is no lens and nothing to hide, so it
+       nearly goes away — it was turning a white room grey everywhere but the
+       middle, which is the opposite of what an unscanned room should look
+       like. */
+    '  float vig = 1.0 - smoothstep(0.72, 1.32, length(p));',
+    '  col *= mix(uVig, 1.0, vig);',
     '  o = vec4(col * uFade, 1.0);',
     '}'
   ].join('\n');
@@ -796,6 +801,8 @@
       gl.uniform1f(prog.view.u.uReticle, o.reticle == null ? 1 : o.reticle);
       gl.uniform1f(prog.view.u.uHudOn, o.hud ? 1 : 0);
       gl.uniform1f(prog.view.u.uBlocks, o.blocks ? 1 : 0);
+      /* Only a lens needs its edge hidden. */
+      gl.uniform1f(prog.view.u.uVig, o.stereo ? 0.42 : 0.88);
       /* Cube edge, in units of the room box — which spans -1..1 across. */
       gl.uniform1f(prog.view.u.uCell, o.cell || 0.1);
       gl.uniform4fv(prog.view.u.uMarks, arr);

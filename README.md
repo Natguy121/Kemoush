@@ -33,10 +33,11 @@ same pipeline — so you scan it the same way.
 1. **You start in white.** Nothing has been seen yet, so there is nothing to
    draw: a blank white space with the faintest hint of cube seams.
 2. **Scan every angle.** Turn all the way round on the spot, with nobody in front
-   of you. Wherever you look, that part of the room arrives over about half a
-   second — colour, shading and relief together — and stays. A compass along the
-   bottom of the view shows which directions are still blank. Nothing is on a
-   timer; it waits for you.
+   of you. The phone is taking a photograph sixty times a second, and each one
+   adds a little more: wherever you look, that part of the room fades up out of
+   the white over about a second — colour, shading and relief together — and
+   stays. A compass along the bottom of the view shows which directions are
+   still blank. Nothing is on a clock; it waits for you.
 3. **Press Done.** The scan ends when you say so. Inside the headset, a
    double-tap on the case does the same thing.
 4. **You are now standing in a blocky model of your room.** Anyone who walks in
@@ -53,8 +54,10 @@ it can say what the room looked like when nobody was in it, in the exact
 direction you happen to be facing.
 
 The plate starts out **white with no confidence**, and every direction walks from
-white to the truth on one curve as it is scanned. That curve is the build-up you
-watch: an unscanned wall is blank paper, a half-scanned one is halfway there.
+white to the truth on one curve as more photographs of it arrive. That curve is
+the build-up you watch: an unscanned wall is blank paper, a wall that has been
+photographed a dozen times is a fifth of the way there, and one you have dwelt on
+for a second is done.
 
 ### Turning that into blocks
 
