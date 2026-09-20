@@ -27,6 +27,10 @@
       <button id="btnCam" class="primary">Use the camera</button>
       <button id="btnRoom">Try the room instead</button>
     </div>
+    <div class="row">
+      <button id="btn3d">Measure the room in 3D</button>
+    </div>
+    <p id="xrNote" class="fine"></p>
     <p id="note" class="note" hidden></p>
 
     <button id="btnHow" class="link">How it works</button>
@@ -102,7 +106,17 @@
   <button id="btnMenu" class="link">quit</button>
 </section>
 
+<!-- shown over the camera during a 3D scan -->
+<section id="xrOverlay">
+  <div class="xrcard">
+    <b id="xrTitle">Measuring the room</b>
+    <p id="xrStat">starting&hellip;</p>
+    <button id="btnXrStop" class="primary">Done measuring</button>
+  </div>
+</section>
+
 <script src="vr.js"></script>
+<script src="scan3d.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

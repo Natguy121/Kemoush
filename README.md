@@ -62,12 +62,34 @@ the build-up you watch: an unscanned wall is blank paper, a wall that has been
 photographed a dozen times is a fifth of the way there, and one you have dwelt on
 for a second is done.
 
-### Turning that into blocks
+### Where the surface is: measured, or guessed
 
-One camera cannot measure depth, so the room is **taken to be a box with you
-standing in the middle of it**. That is a guess, but it is the right guess for a
-room, and it is the corners it produces — two walls and a floor meeting — that
-make the result read as a place rather than as wallpaper.
+Turning on the spot tells the phone which way it is pointing and nothing else.
+Every photograph is taken from the same point, so there is no parallax in them
+and **no depth to recover** — which is why, on its own, this can only take the
+room to be **a box with you standing in the middle of it**. That guess is right
+for the walls, and the corners it produces keep the result reading as a place
+rather than as wallpaper, but it cannot tell a bed from the wall behind the bed.
+
+**Measure the room in 3D** fixes that, on Android. It opens an AR session, which
+knows where the phone *is* as well as which way it faces and hands over a depth
+map with every frame — angle, location, and what the camera sees, which between
+them put every pixel at a place in the room. Those places are collected into one
+distance per direction, measured out from where you started. From one standing
+point nothing is ever behind anything else, so one distance per direction is the
+whole room, and a bed comes out as a bed.
+
+The drawing doesn't change at all: it already asks "how far is the surface, this
+way?" and marches cubes up to it. It just gets a true answer instead of a guessed
+one. Where nothing was measured it falls back to the box, blended at the join so
+a half-scanned edge isn't a cliff. And once the room has been measured there is
+nothing left to invent, so the brightness-driven relief drops away to a token —
+the bed is a bed because it was measured to be one, not because it was lighter
+than the wall.
+
+Scanning has to be done **holding the phone**, walking around the room: phone AR
+draws to the screen, so it can't happen inside the headset. Measure first, then
+put it in the Cardboard and look at what you captured.
 
 Space is then cut into a lattice of cubes. For each direction you look, a ray
 walks that lattice until it meets a solid cube, and the cube's face is shaded by

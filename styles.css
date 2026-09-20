@@ -150,6 +150,33 @@ button.go.primary {
 
 .hint { color: #ffc46b; }
 
+/* Sits over the camera during a 3D scan, via WebXR's dom-overlay. */
+#xrOverlay { display: none; }
+body[data-phase="xr"] #xrOverlay {
+  display: grid;
+  position: fixed;
+  inset: 0;
+  align-content: end;
+  justify-items: center;
+  padding: 0 16px max(24px, env(safe-area-inset-bottom));
+  pointer-events: none;
+}
+
+.xrcard {
+  width: min(420px, 100%);
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(6, 9, 15, 0.82);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  text-align: center;
+  pointer-events: auto;
+}
+
+.xrcard b { display: block; margin-bottom: 4px; }
+.xrcard p { margin: 0 0 12px; color: var(--dim); font-size: 14px; font-variant-numeric: tabular-nums; }
+
 .note {
   margin: 0 0 10px;
   padding: 10px 12px;

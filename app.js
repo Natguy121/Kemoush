@@ -374,6 +374,10 @@
     var t = (now - t0) / 1000;
     frame++;
 
+    /* An AR session owns the canvas while it runs; drawing into it from here
+       as well would fight it for the framebuffer. */
+    if (mode === 'xr') return;
+
     VR.resize();
     R = computeR();
 
@@ -467,7 +471,11 @@
          Its steps stay on a lattice of about twenty across however fine the
          cubes get, which keeps the room's shape steady while its surface
          gains detail. */
-      relief: Math.min(8, Math.max(1, Math.round(0.16 * grid / 2.0))),
+      /* Once the room has actually been measured, its shape is known and there
+         is nothing to invent: the relief drops to a token so the surface still
+         has a little texture, and the bed is a bed because it was measured to
+         be one rather than because it was brighter than the wall. */
+      relief: VR.measured() ? 1 : Math.min(8, Math.max(1, Math.round(0.16 * grid / 2.0))),
       reliefGrid: Math.max(1, Math.round(grid / 20)),
       marks: marks
     });
@@ -579,9 +587,57 @@
     simMode = true;
     VR.useSim(68);
     MT = maskTanOf();
+    /* The pretend room has furniture in it, and its shape is handed over the
+       same way a real 3D scan hands its own over — so what is drawn here is
+       drawn by exactly the path a measured room takes. */
+    VR.uploadDepth(Scan3D.synthetic());
     await askOrientation();
     if (S.stereo) await goImmersive();
     startScan();
+  }
+
+  /* ---------- measuring the room for real ---------- */
+
+  async function reportXr() {
+    var el = $('#xrNote');
+    if (!el) return;
+    var r = await Scan3D.probe();
+    el.textContent = r.ar
+      ? 'This phone can measure the room in 3D.'
+      : (r.error || 'This phone cannot measure in 3D; the other two still work.');
+    $('#btn3d').disabled = !r.ar;
+  }
+
+  async function start3d() {
+    note('');
+    var r = await Scan3D.probe();
+    if (!r.ar) { note(r.error || 'No AR support on this phone.'); return; }
+
+    simMode = false;
+    mode = 'xr';
+    document.body.dataset.phase = 'xr';
+    $('#xrStat').textContent = 'starting…';
+
+    var stat = $('#xrStat');
+    try {
+      var out = await Scan3D.run(VR.gl(), $('#xrOverlay'), function (p) {
+        stat.textContent = Math.round(p.covered * 100) + '% of the room measured · ' +
+          p.points.toLocaleString() + ' points · ' + p.depthFrames + ' depth frames' +
+          (p.note ? ' · ' + p.note : '');
+      });
+      /* Whatever happened, say exactly what happened — this is the one part of
+         the app that cannot be tried out anywhere but on a phone. */
+      note(out.covered > 0.02
+        ? 'Measured ' + Math.round(out.covered * 100) + '% of the room from ' +
+          out.points.toLocaleString() + ' points (' + out.format + '/' + out.usage +
+          '). Now start the camera or the room to look at it.'
+        : 'The session ran but measured nothing: ' + out.depthFrames + ' depth frames, ' +
+          out.points + ' points' + (out.note ? ', ' + out.note : '') + '.');
+    } catch (e) {
+      note(String(e && e.message || e));
+    }
+    mode = 'idle';
+    document.body.dataset.phase = 'idle';
   }
 
   /* Mirror of the renderer's framing maths, so blob positions land in the same
@@ -650,6 +706,8 @@
 
     $('#btnCam').addEventListener('click', startCamera);
     $('#btnRoom').addEventListener('click', startRoom);
+    $('#btn3d').addEventListener('click', start3d);
+    $('#btnXrStop').addEventListener('click', function () { Scan3D.stop(); });
     $('#btnQuit').addEventListener('click', quit);
     $('#btnRescan').addEventListener('click', startScan);
     $('#btnDone').addEventListener('click', function () { if (mode === 'scan') startLive(); });
@@ -688,6 +746,7 @@
     if (!window.isSecureContext) {
       note('This page isn’t on https, so the browser will not give it a camera. The room still works.');
     }
+    reportXr();
 
     window.addEventListener('orientationchange', function () { setTimeout(readScreenAngle, 250); });
     if (screen.orientation) screen.orientation.addEventListener('change', readScreenAngle);

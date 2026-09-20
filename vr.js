@@ -16,6 +16,7 @@
   'use strict';
 
   var PANO_W = 1024, PANO_H = 512;
+  var DEPTH_W = 512, DEPTH_H = 256;
   var MASK_W = 128, MASK_H = 72;
   var COV_W = 32, COV_H = 16;
   var SIM_W = 512, SIM_H = 288;
@@ -27,6 +28,7 @@
   var panoIdx = 0, maskIdx = 0;
   var camSource = null;          // HTMLVideoElement, or null in sim mode
   var simOn = false;
+  var hasDepth = false;          // has anything actually measured the room?
   var maskBuf = new Uint8Array(MASK_W * MASK_H * 4);
   var covBuf = new Uint8Array(COV_W * COV_H * 4);
 
@@ -227,7 +229,8 @@
     'precision highp float;',
     LIB,
     'in vec2 vUv; out vec4 o;',
-    'uniform sampler2D uCam, uPano, uMask, uHud;',
+    'uniform sampler2D uCam, uPano, uMask, uHud, uDepth;',
+    'uniform float uHasDepth;',
     'uniform mat3 uR, uRinv;',
     'uniform mat2 uCamM;',
     'uniform vec2 uMaskTan, uEyeTan, uLens;',
@@ -238,19 +241,26 @@
     'uniform int uMarkN;',
 
     /* ---------- the room, rebuilt out of cubes ----------
-       There is no depth in a single camera, so the room is taken to be a box
-       with the viewer standing in the middle of it. That is a guess, but it is
-       the right guess for a room, and it is the corners it produces — two walls
-       and a floor meeting — that make the result read as a solid place rather
-       than as wallpaper.
+       Where the surface lies in a given direction is either measured or, if
+       nothing has measured it, guessed. The guess is a box with the viewer in
+       the middle of it: right for the walls, and the corners it produces — two
+       walls and a floor meeting — keep it reading as a place rather than as
+       wallpaper, but it cannot know a bed from the wall behind the bed.
+
+       The measurement comes from a 3D scan, and is kept the same way: a
+       distance per direction, in uDepth. That is all a room needs, because from
+       one standing point nothing is behind anything else, and it is what turns
+       the furniture into furniture.
 
        The saving grace of a headset is that the viewer only ever turns, never
        walks. So the whole block world is a function of direction alone, and a
-       ray need not be marched from the eye: it can start just short of the wall
-       and walk a handful of cells. That is what keeps this affordable on a
-       phone. */
+       ray need not be marched from the eye: it can start just short of the
+       surface and walk a handful of cells. That is what keeps this affordable
+       on a phone, measured or guessed. */
     'const vec3 RMIN = vec3(-1.0,-1.0,-0.62);',
     'const vec3 RMAX = vec3( 1.0, 1.0, 0.42);',
+    /* Distances are kept as a fraction of this, so one byte carries a room. */
+    'const float DEPTH_MAX = 4.0;',
 
     /* A fixed shade per facing rather than a lamp somewhere. Indoors, a lamp
        leaves whole walls in the dark; a flat value per axis keeps every face
@@ -270,12 +280,22 @@
     '  return c * (floor(l * 11.0 + 0.5) / 11.0) / l;',
     '}',
 
-    /* How far the box wall is, along d. */
-    'float roomDist(vec3 d){',
+    /* How far the guessed box is, along d. */
+    'float boxDist(vec3 d){',
     '  vec3 sd = max(abs(d), vec3(1e-5)) * (step(vec3(0.0), d)*2.0 - 1.0);',
     '  vec3 s = mix(RMIN, RMAX, step(vec3(0.0), d));',
     '  vec3 tv = s / sd;',
     '  return min(tv.x, min(tv.y, tv.z));',
+    '}',
+
+    /* How far the surface actually is, along d: what was measured where
+       something was, the box everywhere else, and a blend across the join so a
+       half-scanned edge does not come out as a cliff. */
+    'float roomDist(vec3 d){',
+    '  float box = boxDist(d);',
+    '  if (uHasDepth < 0.5) return box;',
+    '  vec4 m = texture(uDepth, panoFromDir(d));',
+    '  return mix(box, m.r * DEPTH_MAX, smoothstep(0.12, 0.45, m.a));',
     '}',
 
     /* How many cells this column of the room stands proud of the flat wall.
@@ -656,10 +676,45 @@
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
+      /* Where the surface really is, one distance per direction, filled by a 3D
+         scan. Wraps in longitude like the colour plate does. */
+      tex.depth = makeTex(DEPTH_W, DEPTH_H, true);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+
       updateCamGeom(65, 16, 9, 0);
       this.forget();
+      this.forgetDepth();
       return null;
     },
+
+    DEPTH_W: DEPTH_W,
+    DEPTH_H: DEPTH_H,
+    /* One room unit is this many metres, so a scan in metres and a room drawn
+       in units agree about how big a bed is. */
+    DEPTH_UNIT: 3.2,
+    DEPTH_MAX: 4.0,
+
+    /* RGBA per direction: distance in r as a fraction of DEPTH_MAX, and how
+       much it is believed in a. Nothing measured yet means nothing believed,
+       and the drawing falls back to the guessed box. */
+    uploadDepth: function (buf) {
+      gl.bindTexture(gl.TEXTURE_2D, tex.depth);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, DEPTH_W, DEPTH_H, 0, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+      hasDepth = true;
+    },
+
+    forgetDepth: function () {
+      gl.bindTexture(gl.TEXTURE_2D, tex.depth);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, DEPTH_W, DEPTH_H, 0, gl.RGBA, gl.UNSIGNED_BYTE,
+        new Uint8Array(DEPTH_W * DEPTH_H * 4));
+      hasDepth = false;
+    },
+
+    measured: function () { return hasDepth; },
+    /* The scanner needs the same context, or its AR session and this renderer
+       would be looking at two different GPUs' worth of state. */
+    gl: function () { return gl; },
 
     useCamera: function (video, fovDeg, rot) {
       camSource = video; simOn = false;
@@ -802,6 +857,8 @@
       bind(1, tex.pano[panoIdx], prog.view.u.uPano);
       bind(2, tex.maskC, prog.view.u.uMask);
       bind(3, tex.hud, prog.view.u.uHud);
+      bind(4, tex.depth, prog.view.u.uDepth);
+      gl.uniform1f(prog.view.u.uHasDepth, hasDepth ? 1 : 0);
       gl.uniformMatrix3fv(prog.view.u.uR, false, R);
       gl.uniformMatrix3fv(prog.view.u.uRinv, false, Rinv);
       gl.uniformMatrix2fv(prog.view.u.uCamM, false, camGeom.camM);
