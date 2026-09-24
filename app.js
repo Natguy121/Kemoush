@@ -334,7 +334,8 @@
       c.fillStyle = '#dfe9f5';
       c.font = '600 25px ui-sans-serif, system-ui, sans-serif';
       c.textAlign = 'center';
-      c.fillText('Turn right round. Room must be empty.', W / 2, 34);
+      c.fillText(VR.measured() ? 'Shape already measured. Turn round once more for colour.'
+        : 'Turn right round. Room must be empty.', W / 2, 34);
       drawCompass(c, W, 62);
       c.fillStyle = done ? '#7dffb0' : '#93a7bb';
       c.font = '500 22px ui-sans-serif, system-ui, sans-serif';
@@ -621,25 +622,31 @@
     $('#xrStat').textContent = 'starting…';
 
     var stat = $('#xrStat');
+    var out = null, failed = null;
     try {
-      var out = await Scan3D.run(VR.gl(), $('#xrOverlay'), function (p) {
+      out = await Scan3D.run(VR.gl(), $('#xrOverlay'), function (p) {
         stat.textContent = Math.round(p.covered * 100) + '% of the room measured · ' +
           p.points.toLocaleString() + ' points · ' + p.depthFrames + ' depth frames' +
           (p.note ? ' · ' + p.note : '');
       });
-      /* Whatever happened, say exactly what happened — this is the one part of
-         the app that cannot be tried out anywhere but on a phone. */
-      note(out.covered > 0.02
-        ? 'Measured ' + Math.round(out.covered * 100) + '% of the room from ' +
-          out.points.toLocaleString() + ' points (' + out.format + '/' + out.usage +
-          '). Now start the camera or the room to look at it.'
-        : 'The session ran but measured nothing: ' + out.depthFrames + ' depth frames, ' +
-          out.points + ' points' + (out.note ? ', ' + out.note : '') + '.');
-    } catch (e) {
-      note(String(e && e.message || e));
-    }
+    } catch (e) { failed = e; }
+
     mode = 'idle';
     document.body.dataset.phase = 'idle';
+
+    if (failed) { note(String(failed && failed.message || failed)); return; }
+
+    if (out.covered > 0.02) {
+      /* Depth has no colour in it — that still takes a pass with the camera
+         on. Going straight into that pass here, instead of landing back on
+         the start screen and waiting for a second, unrelated-looking button,
+         is the difference between one scan with two halves and "do it all
+         again", which is what this used to look like. */
+      await startCamera();
+    } else {
+      note('The session ran but measured nothing: ' + out.depthFrames + ' depth frames, ' +
+        out.points + ' points' + (out.note ? ', ' + out.note : '') + '.');
+    }
   }
 
   /* Mirror of the renderer's framing maths, so blob positions land in the same
