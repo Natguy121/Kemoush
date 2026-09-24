@@ -91,6 +91,14 @@ Scanning has to be done **holding the phone**, walking around the room: phone AR
 draws to the screen, so it can't happen inside the headset. Measure first, then
 put it in the Cardboard and look at what you captured.
 
+**iPhone can't do this, LiDAR or not.** Every browser on iPhone — Safari,
+Chrome, all of them — runs on the same engine, and that engine has never
+shipped the web API this needs. It makes no difference whether the phone has a
+LiDAR scanner; the web page has no way to ask for it. On iPhone the app tells
+you so and falls back to the guessed box. Reaching an iPhone's LiDAR at all
+would mean a native app instead of a web page — a different, much bigger
+project than this one.
+
 Space is then cut into a lattice of cubes. For each direction you look, a ray
 walks that lattice until it meets a solid cube, and the cube's face is shaded by
 which way it points: floor-side faces brightest, ceiling-side darkest, the two

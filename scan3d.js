@@ -193,6 +193,10 @@
 
   /* ---------- what this phone can actually do ---------- */
 
+  function isIPhone() {
+    return /iPhone/i.test((global.navigator && navigator.userAgent) || '');
+  }
+
   async function probe() {
     var r = {
       secure: !!global.isSecureContext,
@@ -200,7 +204,9 @@
       ar: false, error: ''
     };
     if (!r.webxr) {
-      r.error = 'This browser has no WebXR at all. On iPhone that is expected — Safari has never shipped it.';
+      r.error = isIPhone()
+        ? 'This is an iPhone. Even the LiDAR scanner on Pro models can’t help here — every browser on iPhone (Safari, Chrome, all of them) runs on the same engine, and none of them let a web page reach LiDAR or ARKit depth data. 3D measurement currently only works on Android, with ARCore.'
+        : 'This browser has no WebXR at all.';
       return r;
     }
     try {
