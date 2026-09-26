@@ -61,7 +61,7 @@
   function S() { return (window.KEMOSH && window.KEMOSH.settings) ? window.KEMOSH.settings() : {}; }
   var LENS = { off: [0, 0], light: [0.16, 0.10], strong: [0.34, 0.24] };
   /* The block-size choice was cubes-across-a-room; walking needs a real size. */
-  function blockSize() { return ({ 48: 0.15, 80: 0.1, 120: 0.06 })[S().grid] || 0.1; }
+  function blockSize() { return ({ 48: 0.08, 80: 0.05, 120: 0.03, 200: 0.02 })[S().grid] || 0.03; }
 
   /* ---------- GL ---------- */
 
@@ -106,6 +106,54 @@
     '    c *= mix(0.82, 1.0, smoothstep(0.0, 0.09, d));',
     '  }',
     /* A block arrives out of the white, over about a second. */
+    '  c = mix(vec3(1.0), c, smoothstep(0.0, 1.0, vAge));',
+    '  c = mix(c, uVoid, uFog * smoothstep(7.0, 16.0, vDist));',
+    '  o = uDepthOut > 0.5 ? vec4(c, clamp(vDepth / 10.0, 0.0, 0.998)) : vec4(c, 1.0);',
+    '}'
+  ].join('\n');
+
+  /* The room's blocks, drawn one visible face at a time: at a few centimetres
+     a block, drawing whole cubes would spend most of the phone on sides that
+     face another block and can never be seen. */
+  var FACE_VS = [
+    '#version 300 es',
+    'layout(location=2) in vec4 aBase;',
+    'layout(location=3) in vec4 aCol;',
+    'uniform mat4 uView, uProj;',
+    'uniform float uTime, uGrow, uSize;',
+    'out vec3 vN; out vec2 vUv; out vec3 vCol; out float vAge; out float vDist; out float vDepth;',
+    'void main() {',
+    '  int a = int(aCol.a * 255.0 + 0.5);',
+    '  int f = a / 8, b = a - f * 8;',
+    '  vec3 local = vec3(float(b & 1), float((b >> 1) & 1), float((b >> 2) & 1));',
+    '  vN = f == 0 ? vec3(1.0, 0.0, 0.0) : f == 1 ? vec3(-1.0, 0.0, 0.0) : f == 2 ? vec3(0.0, 1.0, 0.0)',
+    '     : f == 3 ? vec3(0.0, -1.0, 0.0) : f == 4 ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 0.0, -1.0);',
+    '  vUv = f < 2 ? local.yz : (f < 4 ? local.xz : local.xy);',
+    '  float age = aBase.w > 0.0 ? clamp((uTime - aBase.w) / 0.9, 0.0, 1.0) : 1.0;',
+    '  float k = mix(1.0, 0.5 + 0.5 * age, uGrow);',
+    '  vec3 w = aBase.xyz + (vec3(0.5) + (local - 0.5) * k) * uSize;',
+    '  vec4 v = uView * vec4(w, 1.0);',
+    '  gl_Position = uProj * v;',
+    '  vCol = aCol.rgb; vAge = age;',
+    '  vDist = length(v.xyz); vDepth = -v.z;',
+    '}'
+  ].join('\n');
+
+  var FACE_FS = [
+    '#version 300 es',
+    'precision highp float;',
+    'in vec3 vN; in vec2 vUv; in vec3 vCol; in float vAge; in float vDist; in float vDepth;',
+    'uniform vec3 uVoid; uniform float uFog; uniform float uDepthOut;',
+    'out vec4 o;',
+    'void main() {',
+    '  float shade = vN.y > 0.5 ? 1.0 : (vN.y < -0.5 ? 0.64 : (abs(vN.x) > 0.5 ? 0.87 : 0.77));',
+    '  vec3 c = vCol * shade;',
+    /* A seam at every block edge, fading out once a block is only a few pixels
+       across — tiny blocks with seams read as a shimmering grid, not a room. */
+    '  float px = max(fwidth(vUv.x), fwidth(vUv.y));',
+    '  float d = min(min(vUv.x, 1.0 - vUv.x), min(vUv.y, 1.0 - vUv.y));',
+    '  float seam = 1.0 - smoothstep(0.0, max(0.09, px), d);',
+    '  c *= 1.0 - 0.18 * seam * (1.0 - smoothstep(0.12, 0.35, px));',
     '  c = mix(vec3(1.0), c, smoothstep(0.0, 1.0, vAge));',
     '  c = mix(c, uVoid, uFog * smoothstep(7.0, 16.0, vDist));',
     '  o = uDepthOut > 0.5 ? vec4(c, clamp(vDepth / 10.0, 0.0, 0.998)) : vec4(c, 1.0);',
@@ -229,11 +277,40 @@
       size = gl.createBuffer();
       gl.bindBuffer(gl.ARRAY_BUFFER, size);
       gl.enableVertexAttribArray(4); gl.vertexAttribPointer(4, 3, gl.FLOAT, false, 0, 0); gl.vertexAttribDivisor(4, 1);
-    } else {
-      gl.disableVertexAttribArray(4);
     }
     gl.bindVertexArray(null);
     return { vao: v, inst: inst, col: col, size: size, count: 0 };
+  }
+
+  function makeFaceVao() {
+    var v = gl.createVertexArray();
+    gl.bindVertexArray(v);
+    var pos = gl.createBuffer(), col = gl.createBuffer(), idx = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, pos);
+    gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 4, gl.FLOAT, false, 0, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, col);
+    gl.enableVertexAttribArray(3); gl.vertexAttribPointer(3, 4, gl.UNSIGNED_BYTE, true, 0, 0);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, idx);
+    gl.bindVertexArray(null);
+    return { vao: v, pos: pos, col: col, idx: idx, count: 0, room: 0 };
+  }
+
+  /* Two triangles per face, over its four corners. The same pattern for
+     every face, so it only needs writing when there are more faces than
+     ever before. */
+  function ensureIndices(faces) {
+    var v = vao.blocks;
+    if (faces <= v.room) return;
+    var room = Math.max(65536, Math.ceil(faces * 1.5)), ix = new Uint32Array(room * 6), i, b;
+    for (i = 0; i < room; i++) {
+      b = i * 4;
+      ix.set([b, b + 1, b + 2, b, b + 2, b + 3], i * 6);
+    }
+    gl.bindVertexArray(v.vao);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, v.idx);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, ix, gl.STATIC_DRAW);
+    gl.bindVertexArray(null);
+    v.room = room;
   }
 
   function makeTarget(w, h, depth) {
@@ -273,6 +350,7 @@
     if (!gl) return 'This browser has no WebGL2.';
     try {
       prog.cube = compile(CUBE_VS, CUBE_FS);
+      prog.face = compile(FACE_VS, FACE_FS);
       prog.fill = compile(QUAD_VS, FILL_FS);
       prog.copy = compile(QUAD_VS, COPY_FS);
       prog.swap = compile(QUAD_VS, SWAP_FS);
@@ -281,7 +359,7 @@
     buf.cube = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, buf.cube);
     gl.bufferData(gl.ARRAY_BUFFER, cubeGeometry(), gl.STATIC_DRAW);
-    vao.blocks = makeCubeVao(false);
+    vao.blocks = makeFaceVao();
     vao.scene = makeCubeVao(true);
     vao.empty = gl.createVertexArray();
 
@@ -297,10 +375,11 @@
 
   function uploadBlocks() {
     var d = World.instances();
-    gl.bindBuffer(gl.ARRAY_BUFFER, vao.blocks.inst);
-    gl.bufferData(gl.ARRAY_BUFFER, d.pos.subarray(0, d.count * 4), gl.DYNAMIC_DRAW);
+    ensureIndices(d.count);
+    gl.bindBuffer(gl.ARRAY_BUFFER, vao.blocks.pos);
+    gl.bufferData(gl.ARRAY_BUFFER, d.pos.subarray(0, d.count * 16), gl.DYNAMIC_DRAW);
     gl.bindBuffer(gl.ARRAY_BUFFER, vao.blocks.col);
-    gl.bufferData(gl.ARRAY_BUFFER, d.col.subarray(0, d.count * 4), gl.DYNAMIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, d.col.subarray(0, d.count * 16), gl.DYNAMIC_DRAW);
     vao.blocks.count = d.count;
   }
 
@@ -329,10 +408,31 @@
     gl.uniform1f(p.u.uFog, opts.fog ? 1 : 0);
     gl.uniform1f(p.u.uDepthOut, opts.depthOut ? 1 : 0);
     gl.bindVertexArray(v.vao);
-    if (opts.size) gl.vertexAttrib3f(4, opts.size, opts.size, opts.size);
     gl.enable(gl.DEPTH_TEST);
     gl.enable(gl.CULL_FACE);
     gl.drawArraysInstanced(gl.TRIANGLES, 0, 36, v.count);
+    gl.disable(gl.CULL_FACE);
+    gl.disable(gl.DEPTH_TEST);
+    gl.bindVertexArray(null);
+  }
+
+  function drawBlocks(viewM, projM, opts) {
+    var v = vao.blocks;
+    if (!v.count) return;
+    var p = prog.face;
+    gl.useProgram(p.p);
+    gl.uniformMatrix4fv(p.u.uView, false, viewM);
+    gl.uniformMatrix4fv(p.u.uProj, false, projM);
+    gl.uniform1f(p.u.uTime, now);
+    gl.uniform1f(p.u.uGrow, opts.grow ? 1 : 0);
+    gl.uniform1f(p.u.uSize, World.size());
+    gl.uniform3fv(p.u.uVoid, VOID);
+    gl.uniform1f(p.u.uFog, opts.fog ? 1 : 0);
+    gl.uniform1f(p.u.uDepthOut, opts.depthOut ? 1 : 0);
+    gl.bindVertexArray(v.vao);
+    gl.enable(gl.DEPTH_TEST);
+    gl.enable(gl.CULL_FACE);
+    gl.drawElements(gl.TRIANGLES, v.count * 6, gl.UNSIGNED_INT, 0);
     gl.disable(gl.CULL_FACE);
     gl.disable(gl.DEPTH_TEST);
     gl.bindVertexArray(null);
@@ -368,7 +468,7 @@
          see where you are walking before the blocks have caught up. */
       fill(VOID[0], VOID[1], VOID[2], phase === 'scan' ? 0.86 : 1.0);
       gl.clear(gl.DEPTH_BUFFER_BIT);
-      drawCubes(vao.blocks, viewM, projM, { seams: true, grow: true, fog: true, size: World.size() });
+      drawBlocks(viewM, projM, { grow: true, fog: true });
     } else if (view === 'camera' && live.ok && vao.blocks.count) {
       var t = target('model', vp[2], vp[3], true);
       gl.bindFramebuffer(gl.FRAMEBUFFER, t.fb);
@@ -376,7 +476,7 @@
       gl.disable(gl.SCISSOR_TEST);
       gl.clearColor(VOID[0], VOID[1], VOID[2], 1);
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-      drawCubes(vao.blocks, viewM, projM, { seams: true, depthOut: true, size: World.size() });
+      drawBlocks(viewM, projM, { depthOut: true });
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
       gl.viewport(vp[0], vp[1], vp[2], vp[3]);
@@ -435,7 +535,7 @@
   var now = 0, frames = 0, lastBuild = 0, colour = false;
   var eyePos = [0, 0, 0];
   var session = null, refSpace = null, binding = null, started = false;
-  var PTS = new Float32Array(160 * 160 * 3), RGB = new Uint8Array(160 * 160 * 3);
+  var PTS = new Float32Array(160 * 120 * 3), RGB = new Uint8Array(160 * 120 * 3);
 
   function setPhase(p) {
     phase = p;
@@ -448,7 +548,8 @@
     var st = World.stats(), el = $('#wStat');
     if (!el) return;
     if (phase === 'scan') {
-      el.textContent = st.blocks.toLocaleString() + ' blocks · ' + st.area.toFixed(1) + ' m² mapped' +
+      el.textContent = st.solid.toLocaleString() + ' blocks · ' + st.area.toFixed(1) + ' m² mapped' +
+        (st.full ? ' · memory full — press Done' : '') +
         (colour || sim ? '' : ' · shape only, this phone gives no colour');
     } else if (phase === 'live') {
       el.textContent = view === 'blocks' ? 'walk around — people aren’t part of this'
@@ -469,7 +570,7 @@
     setPhase('live');
   }
   function rescan() {
-    World.reset(blockSize(), eyePos);
+    World.reset(blockSize(), eyePos, now);
     vao.blocks.count = 0;
     live.ok = false;
     setPhase('scan');
@@ -551,7 +652,7 @@
     else lastSelect = t;
   }
 
-  var CW = 96, CH = 72, camPix = new Uint8Array(CW * CH * 4);
+  var CW = 128, CH = 96, camPix = new Uint8Array(CW * CH * 4);
   function readCamera(v) {
     var tex = null;
     try { tex = binding.getCameraImage(v.camera); } catch (e) { return null; }
@@ -572,18 +673,40 @@
     return camPix;
   }
 
-  /* A depth map, turned into places in the room. getDepthInMeters takes a
-     spot on the screen (top-left is 0,0) and gives its distance from the
-     phone's own plane; the projection turns that into a point in front of
-     the phone, and the phone's pose puts that point in the room. */
-  function sampleXR(v, info, pix) {
-    var P = v.projectionMatrix, M = v.transform.matrix;
-    var land = info.width >= info.height;
-    var SU = land ? 64 : 40, SV = land ? 40 : 64, n = 0, i, j, u, w, d, x, y, z, k, c;
+  /* The depth map as plain metres, straight out of the buffer the phone hands
+     over — thousands of calls to getDepthInMeters a frame would cost more than
+     everything else put together. */
+  var depthBuf = null;
+  function depthMetres(info) {
+    var n = info.width * info.height, i, src;
+    if (!(info.data instanceof ArrayBuffer)) return null;
+    if (!depthBuf || depthBuf.length !== n) depthBuf = new Float32Array(n);
+    src = session.depthDataFormat === 'float32' ? new Float32Array(info.data) : new Uint16Array(info.data);
+    var k = info.rawValueToMeters;
+    for (i = 0; i < n; i++) depthBuf[i] = src[i] * k;
+    return depthBuf;
+  }
+
+  /* A depth map, turned into places in the room. A spot on the screen (top-left
+     is 0,0) is looked up in the depth buffer through the matrix the phone gives
+     for that; the projection turns the distance into a point in front of the
+     phone, and the phone's pose puts that point in the room.
+
+     The spots move a little every frame. Blocks are only a few centimetres
+     across, finer than the grid of spots at any distance, and a grid that never
+     moved would keep landing in the same blocks and leave stripes between
+     them. */
+  function sampleXR(v, info, dm, pix) {
+    var P = v.projectionMatrix, M = v.transform.matrix, D = info.normDepthBufferFromNormView.matrix;
+    var W = info.width, H = info.height;
+    var land = W >= H;
+    var SU = land ? 112 : 64, SV = land ? 64 : 112, n = 0, i, j, u, w, d, x, y, z, k, c, du, dv;
     for (j = 0; j < SV; j++) {
       for (i = 0; i < SU; i++) {
-        u = (i + 0.5) / SU; w = (j + 0.5) / SV;
-        try { d = info.getDepthInMeters(u, w); } catch (e) { continue; }
+        u = (i + Math.random()) / SU; w = (j + Math.random()) / SV;
+        du = D[0] * u + D[4] * w + D[12]; dv = D[1] * u + D[5] * w + D[13];
+        if (du < 0 || dv < 0 || du >= 1 || dv >= 1) continue;
+        d = dm[Math.floor(dv * H) * W + Math.floor(du * W)];
         if (!(d > 0.2 && d < 5.5)) continue;
         x = d * ((2 * u - 1) + P[8]) / P[0];
         y = d * ((1 - 2 * w) + P[9]) / P[5];
@@ -602,19 +725,6 @@
     World.ingest(eyePos, PTS, pix ? RGB : null, n, now);
   }
 
-  var liveBuf = null;
-  function liveFromXR(info) {
-    var n = info.width * info.height, i, src;
-    if (!liveBuf || liveBuf.length !== n) liveBuf = new Float32Array(n);
-    src = info.data instanceof ArrayBuffer
-      ? (session.depthDataFormat === 'float32' ? new Float32Array(info.data) : new Uint16Array(info.data))
-      : null;
-    if (!src) return;
-    var k = info.rawValueToMeters;
-    for (i = 0; i < n; i++) liveBuf[i] = src[i] * k;
-    uploadLive(liveBuf, info.width, info.height, info.normDepthBufferFromNormView.matrix);
-  }
-
   function xrFrame(time, frame) {
     if (!session) return;
     session.requestAnimationFrame(xrFrame);
@@ -629,17 +739,20 @@
     }
     var p = pose.transform.position;
     eyePos = [p.x, p.y, p.z];
-    if (!started) { World.reset(blockSize(), eyePos); vao.blocks.count = 0; started = true; }
+    if (!started) { World.reset(blockSize(), eyePos, now); vao.blocks.count = 0; started = true; }
 
     var v = pose.views[0];
     var info = null;
     try { info = frame.getDepthInformation(v); } catch (e) {}
-    if (info && phase === 'scan') {
+    var dm = info ? depthMetres(info) : null;
+    if (dm && phase === 'scan') {
       var pix = null;
       if (binding && v.camera && frames % 2 === 0) { pix = readCamera(v); if (pix) colour = true; }
-      sampleXR(v, info, pix);
+      sampleXR(v, info, dm, pix);
     }
-    if (info && phase === 'live' && view === 'camera') liveFromXR(info);
+    if (dm && phase === 'live' && view === 'camera') {
+      uploadLive(dm, info.width, info.height, info.normDepthBufferFromNormView.matrix);
+    }
     rebuild(false);
 
     var vp = layer.getViewport(v);
@@ -715,26 +828,36 @@
   var simLive = null;
   /* What a phone would report from here: a depth map and the colours. */
   function simSense(camM, aspect) {
-    var SU = 96, SV = Math.max(24, Math.round(96 / aspect));
     var ty = Math.tan(SIM_FOV / 2), tx = ty * aspect;
-    if (!simLive || simLive.length !== SU * SV) simLive = new Float32Array(SU * SV);
-    var o = [camM[12], camM[13], camM[14]], n = 0, i, j, cx, cy, d, h, k;
-    for (j = 0; j < SV; j++) {
-      for (i = 0; i < SU; i++) {
-        cx = ((i + 0.5) / SU * 2 - 1) * tx;
-        cy = (1 - (j + 0.5) / SV * 2) * ty;
-        d = [camM[0] * cx + camM[4] * cy - camM[8], camM[1] * cx + camM[5] * cy - camM[9], camM[2] * cx + camM[6] * cy - camM[10]];
-        h = cast(o, d);
-        simLive[j * SU + i] = h && h.t < 5.5 ? h.t : 0;
-        if (!h || h.t > 5.5 || phase !== 'scan') continue;
-        k = n * 3;
-        PTS[k] = o[0] + d[0] * h.t; PTS[k + 1] = o[1] + d[1] * h.t; PTS[k + 2] = o[2] + d[2] * h.t;
-        RGB[k] = h.b.c[0]; RGB[k + 1] = h.b.c[1]; RGB[k + 2] = h.b.c[2];
-        n++;
-      }
+    var o = [camM[12], camM[13], camM[14]], n = 0, i, j, cx, cy, d, h, k, SU, SV;
+    function ray(u, w) {
+      cx = (u * 2 - 1) * tx; cy = (1 - w * 2) * ty;
+      d = [camM[0] * cx + camM[4] * cy - camM[8], camM[1] * cx + camM[5] * cy - camM[9], camM[2] * cx + camM[6] * cy - camM[10]];
+      return cast(o, d);
     }
-    if (phase === 'scan') World.ingest(o, PTS, RGB, n, now);
-    if (phase === 'live' && view === 'camera') uploadLive(simLive, SU, SV, null);
+    if (phase === 'scan') {
+      SU = 140; SV = Math.max(40, Math.round(140 / aspect));
+      for (j = 0; j < SV; j++) {
+        for (i = 0; i < SU; i++) {
+          h = ray((i + Math.random()) / SU, (j + Math.random()) / SV);
+          if (!h || h.t > 5.5) continue;
+          k = n * 3;
+          PTS[k] = o[0] + d[0] * h.t; PTS[k + 1] = o[1] + d[1] * h.t; PTS[k + 2] = o[2] + d[2] * h.t;
+          RGB[k] = h.b.c[0]; RGB[k + 1] = h.b.c[1]; RGB[k + 2] = h.b.c[2];
+          n++;
+        }
+      }
+      World.ingest(o, PTS, RGB, n, now);
+    }
+    if (phase === 'live' && view === 'camera') {
+      SU = 96; SV = Math.max(24, Math.round(96 / aspect));
+      if (!simLive || simLive.length !== SU * SV) simLive = new Float32Array(SU * SV);
+      for (j = 0; j < SV; j++) for (i = 0; i < SU; i++) {
+        h = ray((i + 0.5) / SU, (j + 0.5) / SV);
+        simLive[j * SU + i] = h && h.t < 5.5 ? h.t : 0;
+      }
+      uploadLive(simLive, SU, SV, null);
+    }
   }
 
   function simFrame(t) {
@@ -776,7 +899,8 @@
     view = S().view === 'camera' ? 'camera' : 'blocks';
     colour = true;
     live.ok = false;
-    World.reset(blockSize(), simPose.p);
+    now = performance.now() / 1000;
+    World.reset(blockSize(), simPose.p, now);
     vao.blocks.count = 0;
     setPhase('scan');
     simLast = performance.now();
@@ -830,7 +954,7 @@
   async function boot() {
     var err = initGL();
     if (err) { note(err); $('#btnWalk').disabled = true; $('#btnWalkSim').disabled = true; return; }
-    World.reset(blockSize(), [0, 0, 0]);
+    World.reset(blockSize(), [0, 0, 0], 0);
 
     $('#btnWalk').addEventListener('click', startXR);
     $('#btnWalkSim').addEventListener('click', startSim);

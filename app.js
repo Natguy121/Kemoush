@@ -23,22 +23,28 @@
     erase: 1.0,     // how completely they go
     hide: 'always', // 'always' — invisible wherever they stand; 'gaze' — only what you look at
     view: 'blocks', // 'blocks' — the scanned room rebuilt as cubes; 'camera' — live passthrough
-    grid: 80,       // cubes across the room
+    grid: 120,      // cubes across the room; walking turns this into 8, 5, 3 or 2 cm blocks
     stereo: true,
     walkStereo: false, // Cardboard while walking (needs a viewer the camera can see out of)
     camFlip: false     // some phones hand the AR camera picture over upside down
   };
   var S = Object.assign({}, DEF);
+  var saved = null;
   try {
-    var saved = JSON.parse(localStorage.getItem('kemosh') || '{}');
+    saved = JSON.parse(localStorage.getItem('kemosh') || '{}');
     Object.keys(DEF).forEach(function (k) { if (saved[k] !== undefined) S[k] = saved[k]; });
   } catch (e) { /* first run, or storage is off; defaults are fine */ }
   /* Someone who used this before has a cube size saved that no longer exists.
      Left alone it would both render a room of the wrong coarseness and leave
      the settings menu showing a blank. */
-  var GRIDS = [48, 80, 120];
+  var GRIDS = [48, 80, 120, 200];
   if (GRIDS.indexOf(S.grid) < 0) S.grid = DEF.grid;
+  /* Blocks were made much finer; a size saved before that would quietly keep
+     someone on the old coarse ones. */
+  if ((saved && saved.v || 1) < 2) S.grid = DEF.grid;
+  S.v = 2;
   function save() { try { localStorage.setItem('kemosh', JSON.stringify(S)); } catch (e) {} }
+  save();
 
   var LENS = { off: [0, 0], light: [0.16, 0.10], strong: [0.34, 0.24] };
 

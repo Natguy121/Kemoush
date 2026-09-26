@@ -60,9 +60,17 @@ Walking stores the second thing. An AR session on Android knows **where the
 phone is** as well as which way it faces, and hands over a **depth map** with
 every frame — how far away each part of the picture is. Together those put
 every measured point at a real place in the room, and the room is kept as **a
-lattice of blocks fixed to the room** (10 cm each by default), each one solid or
-empty and with a colour. Drawing it from wherever you're standing is then just
-drawing blocks.
+lattice of blocks fixed to the room** — 3 cm each by default, 2 cm at *tiny* —
+each one solid or empty and with a colour. Drawing it from wherever you're
+standing is then just drawing blocks.
+
+Blocks that small would not fit in a phone if the whole room's worth of lattice
+were kept. Almost all of a room is air, though, and air is never stored: the
+lattice is cut into chunks of 16 × 16 × 16 blocks, and a chunk only comes into
+being when something is measured inside it. Only the sides of blocks that face
+air are drawn, all in one go, and edge seams fade out on blocks far enough away
+to be only a few pixels across — tiny blocks with seams read as a shimmering
+grid rather than a room.
 
 Each measurement is a sight line from the phone to a surface. The end of it is a
 vote for *solid here*. The space it passed through on the way is a vote for
@@ -139,9 +147,12 @@ Worth knowing before it surprises you:
   round it and it fills in.
 - **Phone depth is short-sighted.** It measures well out to about four or five
   metres. In a big room, walk closer to the far wall.
-- **It is blocky on purpose, and coarse by necessity.** Anything thinner than a
-  block — a chair leg, a cable, a lamp stand — may come out as nothing, or as a
-  gap-toothed row of blocks. *Block size → small* helps, at some cost in speed.
+- **Finer than the phone can see is just noise.** Blocks are 3 cm, but a phone's
+  depth map is coarse and a little wobbly, especially further away. Thin things
+  — a chair leg, a cable — may come out patchy. Get close to what matters and
+  it fills in; *Block size → tiny* goes to 2 cm, at some cost in speed.
+- **A very big room can fill the phone's memory.** The bar says *memory full*
+  when it does; press Done, or pick a bigger block size and rescan.
 - **Walking while wearing Cardboard** only works if the phone's camera can see
   out of the viewer. Most Cardboards cover it, and then tracking stops. It is off
   by default: scan and walk with the phone in your hand.
@@ -163,7 +174,8 @@ Everything below is in **Settings** on the start screen.
 | **Walk the room** is greyed out | Read the line under it — usually Google Play Services for AR is missing or old |
 | Walking: blocks are all white | This phone won't let pages read the camera in AR; you get the shape only |
 | Walking: colours look upside down or wrong | **Walking colours upside down** |
-| Blocks too coarse, or too fine to read | **Block size** (takes effect on the next scan) |
+| Blocks too coarse, or too fine to read | **Block size** — big 8 cm, medium 5, small 3, tiny 2 (takes effect on the next scan) |
+| Walking gets jerky, or says *memory full* | A bigger **Block size** |
 | You want the real picture instead | **show camera** in the bar while walking |
 | Walking in a headset | **Cardboard while walking** — needs a viewer with a camera hole |
 | Turning: the view is sideways, or squashed | **Camera turned** — try 90°, then 270° |
