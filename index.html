@@ -20,35 +20,41 @@
 <section id="gate" class="screen">
   <div class="card">
     <h1>KEMOSH</h1>
-    <p class="tag">Start in a white void. Look around, and the room builds itself
-      back up around you out of blocks.</p>
+    <p class="tag">Start in a white void. Walk around your room and it builds itself
+      back up around you out of blocks &mdash; then walk through it, and see it from
+      any side.</p>
 
     <div class="row">
-      <button id="btnCam" class="primary">Use the camera</button>
-      <button id="btnRoom">Try the room instead</button>
-    </div>
-    <div class="row">
-      <button id="btn3d">Measure the room in 3D</button>
+      <button id="btnWalk" class="primary">Walk the room</button>
+      <button id="btnWalkSim">Try it on this screen</button>
     </div>
     <p id="xrNote" class="fine"></p>
     <p id="note" class="note" hidden></p>
+
+    <p class="fine alt">No AR on this phone? Stand in one spot and turn instead:</p>
+    <div class="row">
+      <button id="btnCam">Turn on the spot</button>
+      <button id="btnRoom">Try turning here</button>
+    </div>
 
     <button id="btnHow" class="link">How it works</button>
     <div id="how" class="how" hidden>
       <ol>
         <li><b>You start in white.</b> Nothing is known yet, so there is nothing to
-          draw.</li>
-        <li><b>Scan every angle.</b> Turn all the way round on the spot with nobody in
-          front of you. Wherever you look, the room fills in as stacked cubes &mdash;
-          colour, shading and relief arriving together. A compass shows which directions
-          are still blank. When it&rsquo;s filled in, press <b>Done</b>.</li>
-        <li><b>What you end up in is your room, rebuilt.</b> Not the camera picture
-          &mdash; a blocky model of it. Anyone who walks in is simply not part of that
-          model, so they never appear.</li>
+          draw. The camera shows faintly through, so you can see where you&rsquo;re
+          going.</li>
+        <li><b>Walk around the room.</b> Hold the phone up and walk, pointing it at
+          everything: walls, floor, furniture, round the back of the bed. Blocks
+          appear wherever the phone has measured, in the room&rsquo;s own colours,
+          and stay put when you move. Anyone who wanders through gets cleared out
+          as soon as you see past where they were. Press <b>Done</b>.</li>
+        <li><b>Walk through it.</b> You&rsquo;re now in a blocky model of your room,
+          seen from wherever you stand. Nobody who walks in is part of it, so they
+          never appear. <b>Show camera</b> swaps to the live picture, with people
+          replaced by the room behind them.</li>
       </ol>
-      <p class="fine">The blocks are placed on a guessed room-shaped box, because one
-        camera cannot measure depth. <i>Settings &rarr; Show &rarr; the camera</i>
-        switches back to the plain passthrough view.</p>
+      <p class="fine">Walking needs an Android phone with Google Play Services for
+        AR. Without it, <i>Turn on the spot</i> still works, from one place.</p>
     </div>
 
     <details class="opts">
@@ -66,7 +72,8 @@
           <option value="120">small</option>
         </select>
       </label>
-      <label><span>Stereo (Cardboard)</span><input id="optStereo" type="checkbox"></label>
+      <label><span>Cardboard while walking</span><input id="optWalkStereo" type="checkbox"></label>
+      <label><span>Cardboard when turning</span><input id="optStereo" type="checkbox"></label>
       <label><span>Lens correction</span>
         <select id="optLens"><option value="off">off</option><option value="light">light</option><option value="strong">strong</option></select>
       </label>
@@ -75,6 +82,7 @@
       <label><span>Camera turned</span>
         <select id="optRot"><option value="0">0&deg;</option><option value="90">90&deg;</option><option value="180">180&deg;</option><option value="270">270&deg;</option></select>
       </label>
+      <label><span>Walking colours upside down</span><input id="optCamFlip" type="checkbox"></label>
       <label><span>Spot people</span><input id="optSens" type="range" min="0.5" max="2.2" step="0.05"><output data-for="optSens"></output></label>
       <label><span>Hide people</span>
         <select id="optHide">
@@ -106,17 +114,29 @@
   <button id="btnMenu" class="link">quit</button>
 </section>
 
-<!-- shown over the camera during a 3D scan -->
-<section id="xrOverlay">
-  <div class="xrcard">
-    <b id="xrTitle">Measuring the room</b>
-    <p id="xrStat">starting&hellip;</p>
-    <button id="btnXrStop" class="primary">Done measuring</button>
+<!-- walking: its own canvas, and the controls (also the AR overlay) -->
+<canvas id="walk"></canvas>
+<section id="walkUi">
+  <div class="strip wbar">
+    <span class="dot"></span>
+    <span id="wStat"></span>
+    <button id="wDone" class="go primary">Done</button>
+    <button id="wView" class="go">show camera</button>
+    <button id="wRescan" class="link">rescan</button>
+    <button id="wQuit" class="link">quit</button>
+  </div>
+  <div id="wPad" class="pad">
+    <button data-pad="left" aria-label="turn left">&#8630;</button>
+    <button data-pad="fwd" aria-label="walk forward">&#9650;</button>
+    <button data-pad="right" aria-label="turn right">&#8631;</button>
+    <button data-pad="back" aria-label="walk back">&#9660;</button>
   </div>
 </section>
 
 <script src="vr.js"></script>
 <script src="scan3d.js"></script>
 <script src="app.js"></script>
+<script src="world.js"></script>
+<script src="walk.js"></script>
 </body>
 </html>

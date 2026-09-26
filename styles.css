@@ -150,33 +150,6 @@ button.go.primary {
 
 .hint { color: #ffc46b; }
 
-/* Sits over the camera during a 3D scan, via WebXR's dom-overlay. */
-#xrOverlay { display: none; }
-body[data-phase="xr"] #xrOverlay {
-  display: grid;
-  position: fixed;
-  inset: 0;
-  align-content: end;
-  justify-items: center;
-  padding: 0 16px max(24px, env(safe-area-inset-bottom));
-  pointer-events: none;
-}
-
-.xrcard {
-  width: min(420px, 100%);
-  padding: 14px 16px;
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  background: rgba(6, 9, 15, 0.82);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  text-align: center;
-  pointer-events: auto;
-}
-
-.xrcard b { display: block; margin-bottom: 4px; }
-.xrcard p { margin: 0 0 12px; color: var(--dim); font-size: 14px; font-variant-numeric: tabular-nums; }
-
 .note {
   margin: 0 0 10px;
   padding: 10px 12px;
@@ -268,6 +241,53 @@ body[data-phase="xr"] #xrOverlay {
 }
 
 @keyframes pulse { 50% { opacity: 0.25; } }
+
+/* ---------- walking ---------- */
+
+#walk {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: none;
+  touch-action: none;
+}
+
+/* Also the AR overlay: it sits over the camera, so it must stay see-through. */
+#walkUi {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: transparent;
+  pointer-events: none;
+}
+#walkUi .strip, #walkUi .pad { pointer-events: auto; }
+#wStat { font-variant-numeric: tabular-nums; color: var(--ink); }
+
+.pad {
+  position: fixed;
+  left: max(16px, env(safe-area-inset-left));
+  bottom: max(16px, env(safe-area-inset-bottom));
+  display: none;
+  grid-template-columns: repeat(3, 54px);
+  grid-template-rows: repeat(2, 54px);
+  gap: 6px;
+}
+.pad button { min-height: 0; padding: 0; border-radius: 14px; background: var(--glass); font-size: 22px; }
+.pad [data-pad="fwd"] { grid-column: 2; grid-row: 1; }
+.pad [data-pad="left"] { grid-column: 1; grid-row: 2; }
+.pad [data-pad="back"] { grid-column: 2; grid-row: 2; }
+.pad [data-pad="right"] { grid-column: 3; grid-row: 2; }
+
+.alt { margin-top: 4px; }
+
+body[data-phase^="walk"] #walk,
+body[data-phase^="walk"] #walkUi { display: block; }
+body[data-phase^="walk"] #view { display: none; }
+body[data-phase^="walk"][data-sim="1"] .pad { display: grid; }
+body[data-phase="walk-scan"] #wView,
+body[data-phase="walk-scan"] #wRescan,
+body[data-phase="walk-live"] #wDone { display: none; }
 
 /* ---------- which panel shows when ---------- */
 

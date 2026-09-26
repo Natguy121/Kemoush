@@ -24,7 +24,9 @@
     hide: 'always', // 'always' — invisible wherever they stand; 'gaze' — only what you look at
     view: 'blocks', // 'blocks' — the scanned room rebuilt as cubes; 'camera' — live passthrough
     grid: 80,       // cubes across the room
-    stereo: true
+    stereo: true,
+    walkStereo: false, // Cardboard while walking (needs a viewer the camera can see out of)
+    camFlip: false     // some phones hand the AR camera picture over upside down
   };
   var S = Object.assign({}, DEF);
   try {
@@ -377,9 +379,8 @@
     var t = (now - t0) / 1000;
     frame++;
 
-    /* An AR session owns the canvas while it runs; drawing into it from here
-       as well would fight it for the framebuffer. */
-    if (mode === 'xr') return;
+    /* Walking has its own canvas and its own loop; this one stands aside. */
+    if ((document.body.dataset.phase || '').indexOf('walk') === 0) return;
 
     VR.resize();
     R = computeR();
@@ -599,56 +600,6 @@
     startScan();
   }
 
-  /* ---------- measuring the room for real ---------- */
-
-  async function reportXr() {
-    var el = $('#xrNote');
-    if (!el) return;
-    var r = await Scan3D.probe();
-    el.textContent = r.ar
-      ? 'This phone can measure the room in 3D.'
-      : (r.error || 'This phone cannot measure in 3D; the other two still work.');
-    $('#btn3d').disabled = !r.ar;
-  }
-
-  async function start3d() {
-    note('');
-    var r = await Scan3D.probe();
-    if (!r.ar) { note(r.error || 'No AR support on this phone.'); return; }
-
-    simMode = false;
-    mode = 'xr';
-    document.body.dataset.phase = 'xr';
-    $('#xrStat').textContent = 'starting…';
-
-    var stat = $('#xrStat');
-    var out = null, failed = null;
-    try {
-      out = await Scan3D.run(VR.gl(), $('#xrOverlay'), function (p) {
-        stat.textContent = Math.round(p.covered * 100) + '% of the room measured · ' +
-          p.points.toLocaleString() + ' points · ' + p.depthFrames + ' depth frames' +
-          (p.note ? ' · ' + p.note : '');
-      });
-    } catch (e) { failed = e; }
-
-    mode = 'idle';
-    document.body.dataset.phase = 'idle';
-
-    if (failed) { note(String(failed && failed.message || failed)); return; }
-
-    if (out.covered > 0.02) {
-      /* Depth has no colour in it — that still takes a pass with the camera
-         on. Going straight into that pass here, instead of landing back on
-         the start screen and waiting for a second, unrelated-looking button,
-         is the difference between one scan with two halves and "do it all
-         again", which is what this used to look like. */
-      await startCamera();
-    } else {
-      note('The session ran but measured nothing: ' + out.depthFrames + ' depth frames, ' +
-        out.points + ' points' + (out.note ? ', ' + out.note : '') + '.');
-    }
-  }
-
   /* Mirror of the renderer's framing maths, so blob positions land in the same
      place on screen as the pixels they came from. */
   function maskTanOf() {
@@ -715,8 +666,6 @@
 
     $('#btnCam').addEventListener('click', startCamera);
     $('#btnRoom').addEventListener('click', startRoom);
-    $('#btn3d').addEventListener('click', start3d);
-    $('#btnXrStop').addEventListener('click', function () { Scan3D.stop(); });
     $('#btnQuit').addEventListener('click', quit);
     $('#btnRescan').addEventListener('click', startScan);
     $('#btnDone').addEventListener('click', function () { if (mode === 'scan') startLive(); });
@@ -751,11 +700,14 @@
     opt('#optErase', 'erase', Number);
     $('#optStereo').checked = S.stereo;
     $('#optStereo').addEventListener('change', function () { S.stereo = $('#optStereo').checked; save(); });
+    $('#optWalkStereo').checked = S.walkStereo;
+    $('#optWalkStereo').addEventListener('change', function () { S.walkStereo = $('#optWalkStereo').checked; save(); });
+    $('#optCamFlip').checked = S.camFlip;
+    $('#optCamFlip').addEventListener('change', function () { S.camFlip = $('#optCamFlip').checked; save(); });
 
     if (!window.isSecureContext) {
       note('This page isn’t on https, so the browser will not give it a camera. The room still works.');
     }
-    reportXr();
 
     window.addEventListener('orientationchange', function () { setTimeout(readScreenAngle, 250); });
     if (screen.orientation) screen.orientation.addEventListener('change', readScreenAngle);
@@ -766,6 +718,7 @@
     /* A small handle on the running page, for checking behaviour from the
        console on a real phone as much as from a test. */
     window.KEMOSH = {
+      settings: function () { return S; },
       look: function (y, p) { yaw = y; pitch = p; },
       scan: startScan,
       live: startLive,
