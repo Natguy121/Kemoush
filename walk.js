@@ -120,8 +120,8 @@
     'layout(location=2) in vec4 aBase;',
     'layout(location=3) in vec4 aCol;',
     'uniform mat4 uView, uProj;',
-    'uniform float uTime, uGrow, uSize;',
-    'out vec3 vN; out vec2 vUv; out vec3 vCol; out float vAge; out float vDist; out float vDepth;',
+    'uniform float uSize;',
+    'out vec3 vN; out vec2 vUv; out vec3 vCol; out float vDist; out float vDepth;',
     'void main() {',
     '  int a = int(aCol.a * 255.0 + 0.5);',
     '  int f = a / 8, b = a - f * 8;',
@@ -129,12 +129,10 @@
     '  vN = f == 0 ? vec3(1.0, 0.0, 0.0) : f == 1 ? vec3(-1.0, 0.0, 0.0) : f == 2 ? vec3(0.0, 1.0, 0.0)',
     '     : f == 3 ? vec3(0.0, -1.0, 0.0) : f == 4 ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 0.0, -1.0);',
     '  vUv = f < 2 ? local.yz : (f < 4 ? local.xz : local.xy);',
-    '  float age = aBase.w > 0.0 ? clamp((uTime - aBase.w) / 0.9, 0.0, 1.0) : 1.0;',
-    '  float k = mix(1.0, 0.5 + 0.5 * age, uGrow);',
-    '  vec3 w = aBase.xyz + (vec3(0.5) + (local - 0.5) * k) * uSize;',
+    '  vec3 w = aBase.xyz + local * uSize;',
     '  vec4 v = uView * vec4(w, 1.0);',
     '  gl_Position = uProj * v;',
-    '  vCol = aCol.rgb; vAge = age;',
+    '  vCol = aCol.rgb;',
     '  vDist = length(v.xyz); vDepth = -v.z;',
     '}'
   ].join('\n');
@@ -142,7 +140,7 @@
   var FACE_FS = [
     '#version 300 es',
     'precision highp float;',
-    'in vec3 vN; in vec2 vUv; in vec3 vCol; in float vAge; in float vDist; in float vDepth;',
+    'in vec3 vN; in vec2 vUv; in vec3 vCol; in float vDist; in float vDepth;',
     'uniform vec3 uVoid; uniform float uFog; uniform float uDepthOut;',
     'out vec4 o;',
     'void main() {',
@@ -154,7 +152,6 @@
     '  float d = min(min(vUv.x, 1.0 - vUv.x), min(vUv.y, 1.0 - vUv.y));',
     '  float seam = 1.0 - smoothstep(0.0, max(0.09, px), d);',
     '  c *= 1.0 - 0.18 * seam * (1.0 - smoothstep(0.12, 0.35, px));',
-    '  c = mix(vec3(1.0), c, smoothstep(0.0, 1.0, vAge));',
     '  c = mix(c, uVoid, uFog * smoothstep(7.0, 16.0, vDist));',
     '  o = uDepthOut > 0.5 ? vec4(c, clamp(vDepth / 10.0, 0.0, 0.998)) : vec4(c, 1.0);',
     '}'
@@ -423,8 +420,6 @@
     gl.useProgram(p.p);
     gl.uniformMatrix4fv(p.u.uView, false, viewM);
     gl.uniformMatrix4fv(p.u.uProj, false, projM);
-    gl.uniform1f(p.u.uTime, now);
-    gl.uniform1f(p.u.uGrow, opts.grow ? 1 : 0);
     gl.uniform1f(p.u.uSize, World.size());
     gl.uniform3fv(p.u.uVoid, VOID);
     gl.uniform1f(p.u.uFog, opts.fog ? 1 : 0);
@@ -468,7 +463,7 @@
          see where you are walking before the blocks have caught up. */
       fill(VOID[0], VOID[1], VOID[2], phase === 'scan' ? 0.86 : 1.0);
       gl.clear(gl.DEPTH_BUFFER_BIT);
-      drawBlocks(viewM, projM, { grow: true, fog: true });
+      drawBlocks(viewM, projM, { fog: true });
     } else if (view === 'camera' && live.ok && vao.blocks.count) {
       var t = target('model', vp[2], vp[3], true);
       gl.bindFramebuffer(gl.FRAMEBUFFER, t.fb);

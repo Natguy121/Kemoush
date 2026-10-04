@@ -36,7 +36,7 @@ Done.
    putting your feet.
 2. **Walk around the room.** Point the phone at everything — walls, floor,
    furniture, round the sides and backs of things. Wherever it measures, blocks
-   fade up out of the white in the room's own colours, and stay exactly where
+   appear in the room's own colours, and stay exactly where
    they are as you move. The bar at the top counts blocks and square metres.
 3. **Press Done.** Done stops the learning: the room is then kept exactly as you
    scanned it. *Rescan* starts over.
